@@ -34,6 +34,8 @@ jobs:
           mkdir -p build
           swiftc Sources/PetAnimation.swift tests/pet-animation/main.swift -o build/pet-animation-tests
           build/pet-animation-tests
+      - name: Task filtering and sidebar counts
+        run: bash scripts/test-task-filtering.sh
       - name: Universal application
         run: COINDEX_ARCHS="arm64 x86_64" bash scripts/build.sh
       - name: Package and verify public macOS application

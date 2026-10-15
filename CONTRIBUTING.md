@@ -29,6 +29,12 @@ swiftc Sources/PetAnimation.swift tests/pet-animation/main.swift -o build/pet-an
 build/pet-animation-tests
 ```
 
+任务筛选与侧栏计数回归（演示模式，不连接真实服务）：
+
+```sh
+bash scripts/test-task-filtering.sh
+```
+
 可选图集打包工具需要 Pillow 与 NumPy，普通构建不需要。原版 Codex 图集仅用于本机个人导入，不进公开包。
 
 ## 约定

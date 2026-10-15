@@ -80,7 +80,9 @@ final class AppModel: ObservableObject {
     var updateDisabled: Bool { syncing || isOffDuty || isFinishingWorkday || isDemo }
     var openCount: Int { snapshot?.tasks.filter { $0.isOpen && !$0.isSnoozed }.count ?? 0 }
     var selectedTask: TodoTask? { snapshot?.tasks.first { $0.id == selectedTaskId } }
-    var tasks: [TodoTask] {
+    var tasks: [TodoTask] { filteredTasks(for: filter) }
+
+    private func filteredTasks(for filter: String) -> [TodoTask] {
         (snapshot?.tasks ?? []).filter { task in
             let stateMatches: Bool
             if filter == "completed" { stateMatches = !task.isOpen }
@@ -92,7 +94,7 @@ final class AppModel: ObservableObject {
     }
 
     func count(_ kind: String) -> Int {
-        (snapshot?.tasks ?? []).filter { $0.isOpen && !$0.isSnoozed && (kind == "all" || $0.kind == kind) }.count
+        filteredTasks(for: kind).count
     }
 
     private func start() {
