@@ -149,6 +149,7 @@ class SummaryUITests(unittest.TestCase):
         snapshot["summaries"].insert(0, summary_row("new-report", "queued"))
         self.last("summary_generate")[2]({"result": {"summary_id": "new-report", "snapshot": snapshot}})
         self.assertFalse(wizard.win.winfo_exists())
+        self.assertEqual(self.page.selected_id, "new-report")
 
     def test_all_saved_scope_includes_archive_preview_and_round_trips_schedule(self):
         wizard = SummaryWizard(self.page)
@@ -163,7 +164,6 @@ class SummaryUITests(unittest.TestCase):
         editor = SummaryScheduleDialog(self.page)
         self.assertEqual(editor.values()["scope"], "all")
         editor.win.destroy()
-        self.assertEqual(self.page.selected_id, "new-report")
         self.page.cancel()
         self.assertEqual(self.last("summary_cancel")[1], {"summary_id": "new-report"})
 
