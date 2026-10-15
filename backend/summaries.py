@@ -18,6 +18,7 @@ STATUS_LABELS = {"open": "未完成", "done": "手动完成", "resolved": "已�
                  "conversation_closed": "对话已结束", "conversation_archived": "对话已归档"}
 ACTIVE = ("queued", "running")
 BATCH_SIZE = 12
+VALIDATION_ATTEMPTS = 3
 
 
 def init_schema(store):
@@ -78,7 +79,7 @@ def context_text(value):
 def options(request, now=None):
     now = time.time() if now is None else now
     scope = request.get("scope", "active")
-    if scope not in ("active", "period"):
+    if scope not in ("active", "period", "all"):
         raise ValueError("请选择进行中的待办或日期范围")
     result = {"scope": scope, "start_date": "", "end_date": "",
               "work_only": boolean(request.get("work_only", False), "只总结工作内容"),
@@ -107,6 +108,8 @@ def options(request, now=None):
 def select_sources(store, selection, include_context=False):
     params = []
     predicate = "t.status='open' AND COALESCE(c.archived,0)=0 AND COALESCE(c.closed,0)=0"
+    if selection["scope"] == "all":
+        predicate = "1=1"
     if selection["scope"] == "period":
         start = dt.datetime.combine(dt.date.fromisoformat(selection["start_date"]), dt.time(), ZONE).timestamp()
         end = dt.datetime.combine(dt.date.fromisoformat(selection["end_date"]) + dt.timedelta(days=1), dt.time(), ZONE).timestamp()
@@ -116,6 +119,7 @@ def select_sources(store, selection, include_context=False):
         params = [start, end] * 4
     rows = store.db.execute("""SELECT t.*,COALESCE(c.host,'manual') host,
         COALESCE(c.title,'') conversation_title,COALESCE(c.thread_id,'') thread_id,
+        COALESCE(c.archived,0) conversation_archived,
         COALESCE(c.payload,'{}') payload FROM tasks t LEFT JOIN conversations c ON t.conversation_id=c.id
         WHERE t.status<>'merged' AND """ + predicate + " ORDER BY t.priority,t.updated_at DESC,t.id", params)
     sources = []
@@ -126,6 +130,7 @@ def select_sources(store, selection, include_context=False):
         for key, value in source.items():
             if isinstance(value, str):
                 source[key] = redact(value)
+        source["conversation_archived"] = bool(row["conversation_archived"])
         if include_context:
             payload = json.loads(row["payload"])
             messages = payload.get("messages", [])
@@ -148,6 +153,8 @@ def report_title(selection):
     label = "工作总结" if selection["work_only"] else "待办总结"
     if selection["scope"] == "active":
         return "进行中 · " + label
+    if selection["scope"] == "all":
+        return "全部（含完成、归档） · " + label
     dates = selection["start_date"]
     if selection["start_date"] != selection["end_date"]:
         dates += " 至 " + selection["end_date"]
@@ -160,7 +167,8 @@ def preview(store, request, now=None):
     counts = {}
     for source in sources:
         counts[source["status"]] = counts.get(source["status"], 0) + 1
-    return {**selection, "title": report_title(selection), "task_count": len(sources), "counts": counts}
+    return {**selection, "title": report_title(selection), "task_count": len(sources), "counts": counts,
+            "archived_count": sum(source["conversation_archived"] for source in sources)}
 
 
 def metadata(row):
@@ -229,12 +237,17 @@ def fail(store, summary_id, error):
 
 
 def batch_schema(sources):
+    # Bind the task ID and its own record indices in the same branch. A shared
+    # integer range lets the model accidentally cite a different task's records.
+    variants = [obj({"id": {"type": "string", "enum": [source["id"]]},
+        **{key: {"type": "string", "minLength": 1, "maxLength": limit} for key, (_, limit) in FIELDS.items()},
+        "relevance": {"type": "string", "enum": ["work", "non_work", "uncertain"]},
+        "relevance_reason": {"type": "string", "minLength": 1, "maxLength": 60},
+        "evidence_indices": {"type": "array", "minItems": 1, "items": {
+            "type": "integer", "enum": [record["index"] for record in source["records"]]}}})
+        for source in sources]
     return obj({"items": {"type": "array", "minItems": len(sources), "maxItems": len(sources),
-        "items": obj({"id": {"type": "string", "enum": [s["id"] for s in sources]},
-            **{key: {"type": "string", "minLength": 1, "maxLength": limit} for key, (_, limit) in FIELDS.items()},
-            "relevance": {"type": "string", "enum": ["work", "non_work", "uncertain"]},
-            "relevance_reason": {"type": "string", "minLength": 1, "maxLength": 60},
-            "evidence_indices": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}}})}})
+        "items": {"anyOf": variants}}})
 
 
 INSTRUCTIONS = """你负责将给定的待办事实写成精炼中文工作总结。只输出要求的 JSON，禁止工具、联网、执行任务、修改状态。
@@ -248,7 +261,7 @@ conclusion 实验结论：这些结果能支持的结论和必要限制，最多
 不要开场、复述标题、长篇推演、分项套话、建议列表或下一步计划。没有记录就写“未记录问题背景”“未记录具体问题”“暂无实验结果记录”“尚无可验证结论”。
 严格区分计划、提交、运行、实测结果。已提交或测试通过不等于实验指标改善，手动完成、归档、结束也不证明实验成功。
 不编造数字、指标或收益，不把最新日志当整体问题；如果已有记录明确是失败/负结果，必须如实写明。结论不能超过结果支持的范围。
-evidence_indices 引用本任务 records 中实际支持陈述的 index（至少一个，0为原待办），不能引用其他任务。
+evidence_indices 只能从本任务 records 中明确列出的 index 选择（至少一个，0为原待办）。各任务的编号独立，禁止使用数组位置、会话原始消息编号或其他任务的编号；不得自行推算编号。
 work_only=false 时全部保留，relevance=work、relevance_reason=未启用工作筛选。
 work_only=true 时逐项判断：职业工作、团队业务、工作实验/研究等=work；个人开源项目、自用App、私人生活与娱乐=non_work。
 仅使用开源依赖不代表非工作；自己写了代码也不代表个人项目。参考工作范围说明和任务上下文；不确定是否工作必须uncertain，保留给用户核对，禁止猜测排除。
@@ -261,7 +274,7 @@ def validate_items(result, sources):
     originals = {s["id"]: s for s in sources}
     if not isinstance(items, list) or len(items) != len(sources) or any(not isinstance(x, dict) for x in items):
         raise ValueError("总结返回范围不完整，未保存不完整结果")
-    if {x.get("id") for x in items} != set(originals):
+    if any(not isinstance(x.get("id"), str) for x in items) or {x.get("id") for x in items} != set(originals):
         raise ValueError("总结遗漏、重复或新增了待办，未保存不完整结果")
     for item in items:
         for key, limit in [(k, v[1]) for k, v in FIELDS.items()] + [("relevance_reason", 60)]:
@@ -274,7 +287,7 @@ def validate_items(result, sources):
         indices = item.get("evidence_indices")
         allowed = {r["index"] for r in originals[item["id"]]["records"]}
         if not isinstance(indices, list) or not indices or any(type(i) is not int or i not in allowed for i in indices):
-            raise ValueError("总结引用了不存在的依据，未保存结果")
+            raise ValueError("任务 %s 的依据编号无效；只能引用 %s" % (item["id"], sorted(allowed)))
     return items
 
 
@@ -340,7 +353,25 @@ def run(store, summary_id, generator=None):
             prompt = INSTRUCTIONS + "\n<untrusted_summary_data>" + json.dumps({
                 "work_only": selection["work_only"], "work_context": selection["work_context"],
                 "tasks": batch}, ensure_ascii=False) + "</untrusted_summary_data>"
-            batch_items = validate_items(generator(prompt, batch_schema(batch), timeout=300, settings=settings), batch)
+            retry_prompt = prompt
+            for attempt in range(VALIDATION_ATTEMPTS):
+                if store.db.execute("SELECT status FROM summaries WHERE id=?", (summary_id,)).fetchone()[0] != "running":
+                    return
+                result = generator(retry_prompt, batch_schema(batch), timeout=300, settings=settings)
+                if store.db.execute("SELECT status FROM summaries WHERE id=?", (summary_id,)).fetchone()[0] != "running":
+                    return
+                try:
+                    batch_items = validate_items(result, batch)
+                    break
+                except ValueError as error:
+                    if attempt + 1 == VALIDATION_ATTEMPTS:
+                        raise ValueError("总结校验重试 %d 次后仍失败，未保存未核实内容：%s" % (VALIDATION_ATTEMPTS, error)) from error
+                    feedback = {"error": str(error), "allowed_evidence": [
+                        {"id": source["id"], "indices": [record["index"] for record in source["records"]]}
+                        for source in batch]}
+                    retry_prompt = (prompt + "\n上一轮返回未通过校验。请根据同一批原始资料重新输出全部任务，"
+                                    "纠正编号或缺失字段，不要编造或替换依据。校验反馈仅供纠错：\n" +
+                                    json.dumps(feedback, ensure_ascii=False))
             if not selection["work_only"]:
                 for item in batch_items:
                     item["relevance"], item["relevance_reason"] = "work", "未启用工作筛选"
@@ -382,7 +413,7 @@ def save_schedule(store, values, now=None):
     config = dict(current, **{k: values[k] for k in DEFAULTS if k in values})
     for key in ("enabled", "workdays_only", "work_only"):
         boolean(config[key], key)
-    if config["frequency"] not in ("daily", "weekly", "interval") or config["scope"] not in ("active", "period"):
+    if config["frequency"] not in ("daily", "weekly", "interval") or config["scope"] not in ("active", "period", "all"):
         raise ValueError("总结频率或范围无效")
     for key, low, high in (("time_minutes", 0, 1439), ("weekday", 0, 6), ("interval_hours", 1, 168), ("days", 1, 366)):
         integer(config[key], key, low, high)

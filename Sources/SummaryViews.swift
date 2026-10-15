@@ -153,7 +153,7 @@ struct SummaryWorkspaceView: View {
     private func sourceRow(_ source: SummarySource) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(source.title).font(.system(size: 12, weight: .medium))
-            Text("\(summaryStatusTitle(source.status))\(source.host.map { " · \(model.hostName($0))" } ?? "")")
+            Text("\(summaryStatusTitle(source.status))\(source.conversationArchived == true ? " · 已归档" : "")\(source.host.map { " · \(model.hostName($0))" } ?? "")")
                 .font(.system(size: 10)).foregroundStyle(Palette.muted)
             if source.relevance == "uncertain" { Text("工作归属待核对").font(.caption).foregroundStyle(.orange) }
             if let reason = source.relevanceReason, !reason.isEmpty { Text(reason).font(.caption).foregroundStyle(Palette.muted) }
@@ -236,7 +236,8 @@ struct SummaryComposer: View {
     private var selection: some View {
         VStack(alignment: .leading, spacing: 16) {
             scopeOption("active", title: "所有未完成待办", detail: "包括进行中、等待结果、需要决定、稍后处理等未完成待办。")
-            scopeOption("period", title: "一个时间段的全部待办", detail: "汇总期间新增、更新或完成的待办，包含手动待办与已结束记录。")
+            scopeOption("all", title: "全部已保存任务（含完成、归档）", detail: "查看所有机器的历史任务，包括已完成、已结束及归档对话的任务。")
+            scopeOption("period", title: "一个时间段的全部待办", detail: "汇总期间新增、更新或完成的待办，包含已完成、已归档和手动任务。")
             if scope == "period" {
                 Picker("时间段", selection: $preset) {
                     Text("今天").tag("1"); Text("近 3 天").tag("3"); Text("近一周").tag("7"); Text("自定义").tag("custom")
@@ -282,9 +283,12 @@ struct SummaryComposer: View {
             Text("\(preview.taskCount) 条\(workOnly ? "候选待办" : "待办")").font(.system(size: 28, weight: .semibold)).foregroundStyle(Palette.accent)
             if scope == "period" {
                 Text("\(preview.startDate) — \(preview.endDate)（含首尾日期）").font(.callout)
-            } else { Text("全部机器、全部未完成待办，包含稍后处理。").font(.callout) }
+            } else { Text(scope == "all" ? "全部机器、全部已保存任务，包含已完成和已归档任务。" : "全部机器、全部未完成待办，包含稍后处理。").font(.callout) }
             ForEach(preview.counts.keys.sorted(), id: \.self) { status in
                 HStack { Text(summaryStatusTitle(status)); Spacer(); Text("\(preview.counts[status] ?? 0)") }.font(.callout).foregroundStyle(Palette.muted)
+            }
+            if let count = preview.archivedCount, count > 0 {
+                Text("已包含 \(count) 条归档对话的任务。").font(.caption).foregroundStyle(Palette.muted)
             }
             if preview.taskCount == 0 { Text("这个范围暂无待办，请返回选择其他时间。").font(.callout).foregroundStyle(Palette.muted) }
             if workOnly { Text("这是筛选前的数量；生成时识别工作内容，并保留排除原因供核对。").font(.caption).foregroundStyle(Palette.muted) }
@@ -325,6 +329,7 @@ struct SummaryScheduleEditor: View {
                         Divider()
                         Picker("总结范围", selection: $settings.scope) {
                             Text("所有未完成待办").tag("active"); Text("最近一段时间的全部待办").tag("period")
+                            Text("全部已保存任务（含完成、归档）").tag("all")
                         }
                         if settings.scope == "period" { Stepper("近 \(settings.days) 天（包含当天）", value: $settings.days, in: 1...366) }
                         Toggle("只总结工作内容", isOn: $settings.workOnly)

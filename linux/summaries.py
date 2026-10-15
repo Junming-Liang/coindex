@@ -17,6 +17,7 @@ STATUS_LABELS = {"queued": "排队中", "running": "生成中", "completed": "�
                  "failed": "生成失败", "cancelled": "已中止"}
 DAY_CHOICES = {"今天": 1, "近三天": 3, "近一周": 7}
 FREQUENCIES = {"每天": "daily", "每周": "weekly", "每隔几小时": "interval"}
+SCOPES = {"正在进行的全部待办": "active", "最近几天的全部待办": "period", "全部已保存任务（含完成、归档）": "all"}
 WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
 
@@ -26,8 +27,8 @@ def today_string():
 
 def range_request(scope, preset, start_date, end_date):
     """Validate the form independently of transport and GUI state."""
-    if scope == "active":
-        return {"scope": "active"}
+    if scope in ("active", "all"):
+        return {"scope": scope}
     if preset in DAY_CHOICES:
         return {"scope": "period", "days": DAY_CHOICES[preset]}
     if not all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", value.strip()) for value in (start_date, end_date)):
@@ -325,7 +326,7 @@ class SummaryPage(ttk.Frame):
         labels = {"work": "工作事项 · 已纳入", "non_work": "个人项目 · 已排除", "uncertain": "范围待确认 · 已保留"}
         for source in self.current_sources:
             text.insert("end", "%s\n%s\n%s\n\n" %
-                        (source.get("title", "未命名待办"), labels.get(source.get("relevance"), "未分类"),
+                        (source.get("title", "未命名待办") + ("（已归档）" if source.get("conversation_archived") else ""), labels.get(source.get("relevance"), "未分类"),
                          source.get("relevance_reason") or "未提供分类依据"))
         text.configure(state="disabled")
 
@@ -375,6 +376,8 @@ class SummaryWizard:
         ttk.Label(body, text="每个目标输出：问题背景、具体问题、目前实验结果、实验结论。", style="Muted.TLabel").pack(anchor="w", pady=(0, 20))
         ttk.Radiobutton(body, text="正在进行的全部待办", variable=self.scope, value="active").pack(anchor="w", pady=4)
         ttk.Label(body, text="包括稍后处理的待办和手动待办。", style="Muted.TLabel").pack(anchor="w", padx=22, pady=(0, 10))
+        ttk.Radiobutton(body, text="全部已保存任务（含完成、归档）", variable=self.scope, value="all").pack(anchor="w", pady=4)
+        ttk.Label(body, text="包括已完成、已结束及归档对话的历史任务。", style="Muted.TLabel").pack(anchor="w", padx=22, pady=(0, 10))
         ttk.Radiobutton(body, text="某个时间段的全部待办", variable=self.scope, value="period").pack(anchor="w", pady=4)
         ttk.Label(body, text="包括该时段新建、更新或完成的待办，以及已归档事项。", style="Muted.TLabel").pack(anchor="w", padx=22)
         self.period_fields = ttk.Frame(body)
@@ -457,10 +460,14 @@ class SummaryWizard:
             self.preview_request = request
             count = self.preview.get("task_count", 0)
             dates = "正在进行的全部待办"
+            if request["scope"] == "all":
+                dates = "全部已保存任务（含完成、归档）"
             if request["scope"] == "period":
                 dates = "%s 至 %s" % (self.preview.get("start_date", ""), self.preview.get("end_date", ""))
             qualifier = "候选待办（工作范围将在生成时筛选）" if request.get("work_only") else "待办"
             self.preview_text.set("%s\n共 %d 件%s%s" % (dates, count, qualifier, "，可以开始总结。" if count else "，请调整范围。"))
+            if self.preview.get("archived_count", 0):
+                self.preview_text.set(self.preview_text.get() + "\n已包含 %d 条归档对话的任务。" % self.preview["archived_count"])
             self.generate_button.configure(state="normal" if count else "disabled")
         if self.app._rpc("summary_preview", done, **request) is None:
             self.preview_text.set("服务暂时不可用，请稍后重新选择范围。")
@@ -512,7 +519,7 @@ class SummaryScheduleDialog:
         self.time = tk.StringVar(value="%02d:%02d" % divmod(settings.get("time_minutes", 1080), 60))
         self.weekday = tk.StringVar(value=WEEKDAYS[max(0, min(6, settings.get("weekday", 0)))])
         self.interval = tk.StringVar(value=str(settings.get("interval_hours", 24)))
-        self.scope = tk.StringVar(value="正在进行的全部待办" if settings.get("scope") == "active" else "最近几天的全部待办")
+        self.scope = tk.StringVar(value=next((label for label, key in SCOPES.items() if key == settings.get("scope")), "最近几天的全部待办"))
         self.days = tk.StringVar(value=str(settings.get("days", 1)))
         self.workdays = tk.BooleanVar(value=settings.get("workdays_only", False))
         self.work_only = tk.BooleanVar(value=settings.get("work_only", False))
@@ -529,7 +536,7 @@ class SummaryScheduleDialog:
         self.time_entry = self._field("生成时间（北京时间 HH:MM）", self.time)
         self.weekday_box = self._field("每周哪一天", self.weekday, WEEKDAYS)
         self.interval_entry = self._field("间隔小时数（1–168）", self.interval)
-        self._field("总结范围", self.scope, ("正在进行的全部待办", "最近几天的全部待办"))
+        self._field("总结范围", self.scope, tuple(SCOPES))
         self.days_entry = self._field("回顾天数（1–366，含今天）", self.days)
         ttk.Checkbutton(body, text="只在中国大陆法定工作日生成（含调休）", variable=self.workdays).pack(anchor="w", pady=14)
         ttk.Checkbutton(body, text="仅总结工作事项（排除个人开源项目和自制应用）", variable=self.work_only).pack(anchor="w", pady=(0, 8))
@@ -565,7 +572,6 @@ class SummaryScheduleDialog:
 
     def values(self):
         frequency = FREQUENCIES[self.frequency.get()]
-        period = self.scope.get() == "最近几天的全部待办"
         try:
             hours, minutes = (int(part) for part in self.time.get().split(":"))
             if not 0 <= hours <= 23 or not 0 <= minutes <= 59:
@@ -578,7 +584,7 @@ class SummaryScheduleDialog:
             raise ValueError("请检查时间（00:00–23:59）、间隔（1–168 小时）和天数（1–366）。") from exc
         return {"enabled": self.enabled.get(), "frequency": frequency, "time_minutes": hours * 60 + minutes,
                 "weekday": WEEKDAYS.index(self.weekday.get()), "interval_hours": interval,
-                "scope": "period" if period else "active", "days": days, "workdays_only": self.workdays.get(),
+                "scope": SCOPES[self.scope.get()], "days": days, "workdays_only": self.workdays.get(),
                 "work_only": self.work_only.get(), "work_context": self.work_context.get().strip()}
 
     def save(self):

@@ -227,7 +227,7 @@ struct TodoSummary: Decodable, Identifiable {
     var statusTitle: String {
         ["queued": "等待生成", "running": "生成中", "completed": "已完成", "failed": "生成失败", "cancelled": "已中止"][status] ?? status
     }
-    var scopeTitle: String { scope == "active" ? "全部未完成待办（含稍后处理）" : startDate == endDate ? startDate : "\(startDate) — \(endDate)" }
+    var scopeTitle: String { scope == "all" ? "全部已保存任务（含完成、归档）" : scope == "active" ? "全部未完成待办（含稍后处理）" : startDate == endDate ? startDate : "\(startDate) — \(endDate)" }
 }
 
 struct SummarySource: Decodable, Identifiable {
@@ -240,6 +240,7 @@ struct SummarySource: Decodable, Identifiable {
     let nextAction: String?
     let relevance: String?
     let relevanceReason: String?
+    let conversationArchived: Bool?
 }
 
 struct SummaryDetail: Decodable {
@@ -254,6 +255,7 @@ struct SummaryPreview: Decodable {
     let counts: [String: Int]
     let startDate: String
     let endDate: String
+    let archivedCount: Int?
 }
 
 struct SummaryGenerationResult: Decodable {
