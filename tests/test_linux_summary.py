@@ -27,6 +27,7 @@ class SummaryRangeTests(unittest.TestCase):
     @patch("linux.summaries.today_string", return_value="2026-10-15")
     def test_presets_are_calendar_ranges_and_active_ignores_hidden_dates(self, _today):
         self.assertEqual(range_request("active", "自定义日期", "invalid", "invalid"), {"scope": "active"})
+        self.assertEqual(range_request("all", "自定义日期", "invalid", "invalid"), {"scope": "all"})
         for label, days in (("今天", 1), ("近三天", 3), ("近一周", 7)):
             self.assertEqual(range_request("period", label, "", ""), {"scope": "period", "days": days})
         self.assertEqual(range_request("period", "自定义日期", "2026-10-15", "2026-10-15"),
@@ -151,6 +152,20 @@ class SummaryUITests(unittest.TestCase):
         self.assertEqual(self.page.selected_id, "new-report")
         self.page.cancel()
         self.assertEqual(self.last("summary_cancel")[1], {"summary_id": "new-report"})
+
+    def test_all_saved_scope_includes_archive_preview_and_round_trips_schedule(self):
+        wizard = SummaryWizard(self.page)
+        wizard.scope.set("all")
+        wizard.start.set("invalid hidden date")
+        self.preview(wizard, archived_count=2)
+        self.assertEqual(self.last("summary_preview")[1]["scope"], "all")
+        self.assertIn("归档", wizard.preview_text.get())
+        self.assertIn("2 条", wizard.preview_text.get())
+        wizard.win.destroy()
+        self.app.snapshot["summary_schedule"]["scope"] = "all"
+        editor = SummaryScheduleDialog(self.page)
+        self.assertEqual(editor.values()["scope"], "all")
+        editor.win.destroy()
 
     def test_snapshot_polling_keeps_draft_and_schedule_save_failure_retains_input(self):
         wizard = SummaryWizard(self.page)

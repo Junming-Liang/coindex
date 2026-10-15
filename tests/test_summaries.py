@@ -88,6 +88,70 @@ class SummaryTests(unittest.TestCase):
         result = summaries.select_sources(self.store, summaries.options({"scope": "period", "days": 1}, self.now))
         self.assertEqual({s["id"] for s in result}, set(ids[:2]))
 
+    def test_all_scope_includes_completed_and_archived_without_reopening_tasks(self):
+        active = self.manual()
+        completed = self.manual("已完成的工作")
+        self.store.act("complete", completed)
+        conv = conversation(updated=self.now)
+        self.store.ingest(dict(host="mac", files={}, conversations=[conv], total_files=1, remaining_files=0, root="/example"))
+        self.store.reconcile([entry()], [conv])
+        self.store.ingest(dict(host="mac", files={}, conversations=[], total_files=1, remaining_files=0, root="/example",
+                               archive_states={conv["thread_id"]: True}))
+        before = [tuple(row) for row in self.store.db.execute("SELECT * FROM tasks ORDER BY id")]
+        preview = summaries.preview(self.store, {"scope": "all"}, self.now)
+        self.assertEqual(preview["task_count"], 3)
+        self.assertEqual(preview["archived_count"], 1)
+        sid = summaries.create(self.store, {"scope": "all"}, now=self.now)
+        summaries.run(self.store, sid, response)
+        result = summaries.detail(self.store, sid)
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("归档", result["title"])
+        self.assertEqual({s["id"] for s in result["sources"]} & {active, completed}, {active, completed})
+        self.assertEqual(sum(s["conversation_archived"] for s in result["sources"]), 1)
+        self.assertEqual(before, [tuple(row) for row in self.store.db.execute("SELECT * FROM tasks ORDER BY id")])
+        summaries.save_schedule(self.store, {"scope": "all"}, self.now)
+        self.assertEqual(summaries.schedule_settings(self.store)["scope"], "all")
+
+    def test_schema_binds_evidence_to_each_task_instead_of_shared_integer_range(self):
+        self.manual("只有待办记录")
+        sources = summaries.select_sources(self.store, summaries.options({"scope": "all"}, self.now), True)
+        extra = dict(sources[0], id="another-task", records=[{"index": 0}, {"index": 1}, {"index": 2}])
+        branches = summaries.batch_schema(sources + [extra])["properties"]["items"]["items"]["anyOf"]
+        allowed = {b["properties"]["id"]["enum"][0]: b["properties"]["evidence_indices"]["items"]["enum"] for b in branches}
+        self.assertEqual(allowed, {sources[0]["id"]: [0], "another-task": [0, 1, 2]})
+
+    def test_invalid_evidence_is_regenerated_and_never_silently_remapped(self):
+        self.manual()
+        sid = summaries.create(self.store, {"scope": "active"}, now=self.now)
+        calls = []
+        def corrected(prompt, schema, **kwargs):
+            calls.append(prompt)
+            value = response(prompt, schema, **kwargs)
+            if len(calls) == 1:
+                value["items"][0]["evidence_indices"] = [999]
+                value["items"][0]["results"] = "本条无效输出不能被保存"
+            return value
+        summaries.run(self.store, sid, corrected)
+        result = summaries.detail(self.store, sid)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(len(calls), 2)
+        self.assertIn('"indices": [0]', calls[1])
+        self.assertNotIn("本条无效输出不能被保存", result["content"])
+        self.assertEqual(result["sources"][0]["evidence_indices"], [0])
+
+    def test_cancelling_invalid_response_prevents_corrective_model_calls(self):
+        self.manual()
+        sid = summaries.create(self.store, {"scope": "active"}, now=self.now)
+        def late(prompt, schema, **kwargs):
+            summaries.cancel(self.store, sid)
+            value = response(prompt, schema, **kwargs)
+            value["items"][0]["evidence_indices"] = [999]
+            return value
+        with patch("summaries.generate_json", side_effect=late) as model:
+            summaries.run(self.store, sid)
+        self.assertEqual(model.call_count, 1)
+        self.assertEqual(summaries.detail(self.store, sid)["status"], "cancelled")
+
     def test_backfill_is_additive_and_idempotent(self):
         ident = self.manual(when=stamp("2026-10-01T12:00"))
         with patch("store.time.time", return_value=self.now):
