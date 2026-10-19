@@ -141,11 +141,22 @@ dump("05-summary-composer")
 cancelSheet()
 press("summary-schedule")
 expect(contains("自动生成并保存总结") && contains("保存设置"), "automatic summary settings panel opens")
-guard let toggle = nodes().first(where: { [kAXCheckBoxRole, "AXSwitch"].contains(attr($0, kAXRoleAttribute) as? String ?? "") && text($0).contains("自动生成并保存总结") }) else { fail("Automatic summary toggle not exposed") }
-let oldToggle = String(describing: attr(toggle, kAXValueAttribute))
+// The actual SwiftUI AX tree exposes a separate static label immediately before its checkbox.
+func scheduleToggle() -> AXUIElement {
+    guard let sheet = nodes().first(where: { attr($0, kAXRoleAttribute) as? String == kAXSheetRole }) else { fail("Summary settings sheet missing") }
+    let sheetNodes = tree(sheet)
+    let labels = sheetNodes.indices.filter { attr(sheetNodes[$0], kAXRoleAttribute) as? String == kAXStaticTextRole && attr(sheetNodes[$0], kAXValueAttribute) as? String == "自动生成并保存总结" }
+    guard labels.count == 1, labels[0] + 1 < sheetNodes.count else { fail("Summary toggle label ambiguous/missing") }
+    let toggle = sheetNodes[labels[0] + 1]
+    guard [kAXCheckBoxRole, "AXSwitch"].contains(attr(toggle, kAXRoleAttribute) as? String ?? "") else { fail("Summary label not followed by its checkbox") }
+    return toggle
+}
+let toggle = scheduleToggle()
+guard let beforeToggle = attr(toggle, kAXValueAttribute) as? NSNumber, beforeToggle.intValue == 0 else { fail("Summary toggle initial state must be numeric zero") }
 guard AXUIElementPerformAction(toggle, kAXPressAction as CFString) == .success else { fail("Automatic summary toggle cannot be pressed") }
 Thread.sleep(forTimeInterval: 0.5)
-expect(String(describing: attr(toggle, kAXValueAttribute)) != oldToggle, "summary schedule toggle changes draft state")
+guard let afterToggle = attr(scheduleToggle(), kAXValueAttribute) as? NSNumber else { fail("Summary toggle value unreadable after click") }
+expect(afterToggle.intValue == 1, "summary schedule toggle changes draft state from 0 to 1")
 dump("06-summary-schedule")
 cancelSheet()
 expect(capture, "runner permits screenshots")
