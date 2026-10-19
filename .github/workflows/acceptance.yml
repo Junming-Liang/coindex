@@ -3,6 +3,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: release-acceptance-v1.10.3
   cancel-in-progress: false
@@ -24,7 +25,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
-      - name: Download immutable Draft assets and validate source and hashes
+      - name: Download original release artifact and match verified Draft bytes
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -33,24 +34,32 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           mkdir -p "$RUNNER_TEMP/acceptance/assets" "$RUNNER_TEMP/acceptance/evidence"
           gh api repos/Junming-Liang/coindex/git/ref/tags/v1.10.3 > "$RUNNER_TEMP/acceptance/evidence/tag.json"
-          gh api repos/Junming-Liang/coindex/releases/tags/v1.10.3 > "$RUNNER_TEMP/acceptance/evidence/release.json"
-          python3 - <<'PY'
-          import hashlib,json,os,pathlib,subprocess
+          gh api repos/Junming-Liang/coindex/actions/runs/39269363933 > "$RUNNER_TEMP/acceptance/evidence/source-run.json"
+          gh api repos/Junming-Liang/coindex/actions/artifacts/12194972693 > "$RUNNER_TEMP/acceptance/evidence/source-artifact.json"
+          gh api repos/Junming-Liang/coindex/actions/artifacts/12194972693/zip > "$RUNNER_TEMP/acceptance/original-artifact.zip"
+          python3 - <<'PYCODE'
+          import hashlib,json,os,pathlib,zipfile
           root=pathlib.Path(os.environ['RUNNER_TEMP'])/'acceptance'
+          source='01e5eef52bfce2343e717e2adb6f9d54f87d117c'
           tag=json.loads((root/'evidence/tag.json').read_text())
-          assert tag['object']['sha']=='01e5eef52bfce2343e717e2adb6f9d54f87d117c' and tag['object']['type']=='commit'
-          release=json.loads((root/'evidence/release.json').read_text())
-          assert release['draft'] is True and release['tag_name']=='v1.10.3'
+          assert tag['object']['sha']==source and tag['object']['type']=='commit'
+          run=json.loads((root/'evidence/source-run.json').read_text())
+          assert run['id']==39269363933 and run['head_sha']==source and run['conclusion']=='success' and run['event']=='workflow_dispatch'
+          artifact=json.loads((root/'evidence/source-artifact.json').read_text())
+          assert artifact['id']==12194972693 and artifact['name']=='coindex-release' and artifact['expired'] is False
+          assert artifact['workflow_run']['id']==39269363933 and artifact['workflow_run']['head_sha']==source
+          archive_sha='ef1d462860cd67fb18fc32268fb93c1f0b597eb8b799efe6ffdad2f875b04ac6'
+          archive=root/'original-artifact.zip'
+          assert hashlib.sha256(archive.read_bytes()).hexdigest()==archive_sha
           hashes={'coindex-1.10.3-macos-universal.dmg':'af8ea30cd7524c7a26629bda2854fd4bd506c8f9caa5962589cde562ccc6118d','coindex-1.10.3-linux.tar.gz':'62b4bd572b43261832555495789cc6f3ad0368a543be5fddedc68a8517fac861'}
-          for name,expected in hashes.items():
-              assets=[a for a in release['assets'] if a['name']==name]
-              assert len(assets)==1
-              dest=root/'assets'/name
-              with dest.open('wb') as f:
-                  subprocess.run(['gh','api','-H','Accept: application/octet-stream',f"repos/Junming-Liang/coindex/releases/assets/{assets[0]['id']}"],stdout=f,check=True)
-              assert hashlib.sha256(dest.read_bytes()).hexdigest()==expected, name
-          (root/'evidence/artifact-identity.json').write_text(json.dumps({'source':'01e5eef52bfce2343e717e2adb6f9d54f87d117c','version':'1.10.3','verified_sha256':hashes},indent=2))
-          PY
+          with zipfile.ZipFile(archive) as z:
+              for name,expected in hashes.items():
+                  assert z.namelist().count(name)==1
+                  data=z.read(name)
+                  assert hashlib.sha256(data).hexdigest()==expected, name
+                  (root/'assets'/name).write_bytes(data)
+          (root/'evidence/artifact-identity.json').write_text(json.dumps({'source':source,'version':'1.10.3','release_run':39269363933,'artifact_id':12194972693,'artifact_archive_sha256':archive_sha,'verified_draft_sha256':hashes},indent=2))
+          PYCODE
       - name: Install unchanged macOS DMG application into isolated directory
         if: runner.os == 'macOS'
         shell: bash
