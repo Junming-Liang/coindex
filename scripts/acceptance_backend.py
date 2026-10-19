@@ -20,6 +20,7 @@ def require(condition, message):
 
 def linux_ui(backend, evidence, report):
     import subprocess
+    import base64
     import tkinter as tk
     import time
     package = backend.parent
@@ -52,6 +53,11 @@ def linux_ui(backend, evidence, report):
         subprocess.run(["scrot", str(image)], check=True, timeout=15)
         raw = image.read_bytes()
         require(len(raw) > 100 and raw[:8] == b"\x89PNG\r\n\x1a\n", "Screenshot invalid")
+        require(len(raw) <= 1_000_000, "Screenshot exceeds bounded log evidence size")
+        encoded = base64.b64encode(raw).decode("ascii")
+        for start in range(0, len(encoded), 4000):
+            print(f"COINDEX_PNG_CHUNK {name} {start // 4000} {encoded[start:start + 4000]}")
+        print(f"COINDEX_PNG_END {name} {len(raw)}")
     try:
         with patch("socket.socket", side_effect=AssertionError("Network forbidden")):
             app = frontend.CoindexApp(root, data_dir=os.environ["CODEX_TODO_DATA_DIR"], demo=True, client_factory=forbidden)
