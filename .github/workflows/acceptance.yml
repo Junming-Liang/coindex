@@ -1,0 +1,107 @@
+name: Release acceptance
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-acceptance-v1.10.3
+  cancel-in-progress: false
+jobs:
+  installed-release:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      COINDEX_DISABLE_UPDATE_CHECK: '1'
+      CODEX_TODO_CODEX: /usr/bin/false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Download immutable Draft assets and validate source and hashes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          mkdir -p "$RUNNER_TEMP/acceptance/assets" "$RUNNER_TEMP/acceptance/evidence"
+          gh api repos/Junming-Liang/coindex/git/ref/tags/v1.10.3 > "$RUNNER_TEMP/acceptance/evidence/tag.json"
+          gh api repos/Junming-Liang/coindex/releases/tags/v1.10.3 > "$RUNNER_TEMP/acceptance/evidence/release.json"
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          root=pathlib.Path(os.environ['RUNNER_TEMP'])/'acceptance'
+          tag=json.loads((root/'evidence/tag.json').read_text())
+          assert tag['object']['sha']=='01e5eef52bfce2343e717e2adb6f9d54f87d117c' and tag['object']['type']=='commit'
+          release=json.loads((root/'evidence/release.json').read_text())
+          assert release['draft'] is True and release['tag_name']=='v1.10.3'
+          hashes={'coindex-1.10.3-macos-universal.dmg':'af8ea30cd7524c7a26629bda2854fd4bd506c8f9caa5962589cde562ccc6118d','coindex-1.10.3-linux.tar.gz':'62b4bd572b43261832555495789cc6f3ad0368a543be5fddedc68a8517fac861'}
+          for name,expected in hashes.items():
+              assets=[a for a in release['assets'] if a['name']==name]
+              assert len(assets)==1
+              dest=root/'assets'/name
+              with dest.open('wb') as f:
+                  subprocess.run(['gh','api','-H','Accept: application/octet-stream',f"repos/Junming-Liang/coindex/releases/assets/{assets[0]['id']}"],stdout=f,check=True)
+              assert hashlib.sha256(dest.read_bytes()).hexdigest()==expected, name
+          (root/'evidence/artifact-identity.json').write_text(json.dumps({'source':'01e5eef52bfce2343e717e2adb6f9d54f87d117c','version':'1.10.3','verified_sha256':hashes},indent=2))
+          PY
+      - name: Install unchanged macOS DMG application into isolated directory
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/acceptance"
+          mkdir -p "$root/installed" "$root/data" "$root/codex" "$root/mount"
+          hdiutil verify "$root/assets/coindex-1.10.3-macos-universal.dmg"
+          hdiutil attach -readonly -nobrowse -mountpoint "$root/mount" "$root/assets/coindex-1.10.3-macos-universal.dmg"
+          ditto "$root/mount/coindex.app" "$root/installed/coindex.app"
+          hdiutil detach "$root/mount"
+          codesign --verify --deep --strict "$root/installed/coindex.app"
+          python3 scripts/acceptance_backend.py "$root/installed/coindex.app/Contents/Resources/backend" "$root/evidence/backend.json"
+      - name: Launch installed macOS demo, inspect accessibility, and capture UI
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/acceptance"
+          swiftc scripts/acceptance_macos.swift -o "$root/acceptance-macos"
+          export CODEX_TODO_DATA_DIR="$root/data" CODEX_HOME="$root/codex"
+          "$root/installed/coindex.app/Contents/MacOS/coindex" --demo --preview-light > "$root/evidence/app.log" 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+          sleep 5
+          kill -0 "$app_pid"
+          "$root/acceptance-macos" "$app_pid" "$root/evidence" 2>&1 | tee "$root/evidence/ax.log"
+      - name: Install Linux runtime tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk xvfb desktop-file-utils fonts-noto-cjk scrot
+      - name: Install and launch unchanged Linux release with isolated data
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/acceptance"
+          tar xzf "$root/assets/coindex-1.10.3-linux.tar.gz" -C "$root"
+          export XDG_DATA_HOME="$root/xdg" CODEX_HOME="$root/codex"
+          mkdir -p "$CODEX_HOME"
+          bash "$root/coindex-linux/scripts/install-linux.sh" --prefix "$root/prefix"
+          "$root/prefix/bin/coindex" --help
+          desktop-file-validate "$XDG_DATA_HOME/applications/org.coindex.desktop.desktop"
+          xvfb-run -a "$root/prefix/bin/coindex" --demo --data-dir "$root/data" --smoke-test 2>&1 | tee "$root/evidence/linux-smoke.log"
+          xvfb-run -a python3 scripts/acceptance_backend.py "$root/xdg/coindex-app/backend" "$root/evidence/backend.json" --linux-ui
+      - name: Retain acceptance evidence even when runner permissions block UI
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coindex-v1.10.3-acceptance-${{ runner.os }}
+          path: ${{ runner.temp }}/acceptance/evidence
+          if-no-files-found: error
+          retention-days: 14
