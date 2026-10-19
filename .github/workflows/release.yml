@@ -2,28 +2,54 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Exact stable tag matching VERSION, e.g. v1.10.3'
+        required: true
+        type: string
+      expected_sha:
+        description: 'Full main commit SHA to build; must match this workflow run'
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.release_tag || github.ref_name }}
   cancel-in-progress: false
 jobs:
   version:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    outputs:
+      release_tag: ${{ steps.validate.outputs.release_tag }}
+      source_sha: ${{ steps.validate.outputs.source_sha }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Require matching version and release notes
+          ref: ${{ github.sha }}
+      - name: Require matching immutable source, version and release notes
+        id: validate
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: python3 scripts/release.py check-tag "$RELEASE_TAG"
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            [ "$GITHUB_REF" = refs/heads/main ] || { echo 'Dispatch from main only'; exit 1; }
+            [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'Provide a full commit SHA'; exit 1; }
+            [ "$EXPECTED_SHA" = "$GITHUB_SHA" ] || { echo 'main changed; review and dispatch the current commit'; exit 1; }
+          fi
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]
+          python3 scripts/release.py check-tag "$RELEASE_TAG"
+          printf 'release_tag=%s\nsource_sha=%s\n' "$RELEASE_TAG" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
   verify:
     needs: version
     uses: ./.github/workflows/ci.yml
   draft:
-    needs: verify
+    needs: [version, verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -32,20 +58,46 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ needs.version.outputs.source_sha }}
       - uses: actions/download-artifact@v8
         with:
           name: coindex-release
           path: dist
       - name: Recheck artifacts and prepare release notes
+        env:
+          SOURCE_SHA: ${{ needs.version.outputs.source_sha }}
         run: |
           python3 scripts/release.py verify
+          python3 - <<'PYCODE'
+          import json, os, pathlib, tarfile, zipfile
+          version = pathlib.Path('VERSION').read_text().strip()
+          with zipfile.ZipFile(f'dist/coindex-{version}-macos-universal.zip') as archive:
+              mac = json.loads(archive.read('coindex.app/Contents/Resources/release.json'))
+          with tarfile.open(f'dist/coindex-{version}-linux.tar.gz', 'r:gz') as archive:
+              linux = json.loads(archive.extractfile('coindex-linux/release.json').read())
+          assert mac['revision'] == linux['revision'] == os.environ['SOURCE_SHA'], 'Artifact source SHA mismatch'
+          PYCODE
           python3 scripts/release.py notes > release-notes.md
-      - name: Create or refresh a draft (never publish automatically)
+      - name: Bind tag to verified source and create or refresh a draft
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.version.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.version.outputs.source_sha }}
         run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ]
+          # GITHUB_TOKEN tag creation does not trigger another workflow.
+          # Verification and artifacts must come from this same run.
+          gh api "repos/$GH_REPO/git/matching-refs/tags/$RELEASE_TAG" > tag-refs.json
+          TAG_OBJECT=$(python3 -c 'import json,os; refs=[r for r in json.load(open("tag-refs.json")) if r["ref"] == "refs/tags/" + os.environ["RELEASE_TAG"]]; assert len(refs) <= 1; print(refs[0]["object"]["sha"] if refs else "")')
+          if [ -n "$TAG_OBJECT" ]; then
+            git fetch --no-tags origin "refs/tags/$RELEASE_TAG"
+            [ "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$SOURCE_SHA" ] || { echo 'Existing tag points to a different commit; refusing to move it'; exit 1; }
+          else
+            gh api --method POST "repos/$GH_REPO/git/refs" -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$SOURCE_SHA" > created-tag.json
+            python3 -c 'import json,os; r=json.load(open("created-tag.json")); assert r["ref"] == "refs/tags/"+os.environ["RELEASE_TAG"] and r["object"]["sha"] == os.environ["SOURCE_SHA"]'
+          fi
           if gh release view "$RELEASE_TAG" --json isDraft > release-state.json 2>/dev/null; then
             python3 -c 'import json; assert json.load(open("release-state.json"))["isDraft"], "Refusing to replace an already published release"'
             gh release edit "$RELEASE_TAG" --draft --title "coindex $RELEASE_TAG" --notes-file release-notes.md
