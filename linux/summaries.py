@@ -115,7 +115,7 @@ class SummaryPage(ttk.Frame):
                           highlightthickness=1, highlightbackground=app.BORDER)
         panes.add(detail, weight=3)
         self.title = tk.StringVar(value="回顾进展，看清下一步")
-        self.subtitle = tk.StringVar(value="每个目标用四句话：背景、问题、实验结果和结论。")
+        self.subtitle = tk.StringVar(value="按专项汇报进展、结果与下一步，整理文档和配图。")
         title_label = tk.Label(detail, textvariable=self.title, bg=app.SURFACE, fg=app.INK,
                               font=(app.font_family, 14, "bold"), anchor="w", justify="left", wraplength=430)
         title_label.pack(fill="x")
@@ -261,7 +261,7 @@ class SummaryPage(ttk.Frame):
         if detail.get("work_only") and state == "completed":
             self.subtitle.set(self.subtitle.get() + "\n已排除 %d 件个人项目 · %d 件待确认" %
                               (detail.get("excluded_count", 0), detail.get("uncertain_count", 0)))
-        fallback = {"queued": "已加入生成队列，可以继续处理其他待办。", "running": "正在整理背景、问题、实验结果和结论，可以离开此页面。",
+        fallback = {"queued": "已加入生成队列，可以继续处理其他待办。", "running": "正在整理专项进展、结果和相关产物，可以离开此页面。",
                     "cancelled": "本次总结已中止。可以重新选择范围生成。", "failed": "生成失败：" + str(detail.get("error") or "请检查模型连接后重试。"),
                     "completed": "正在读取总结…"}
         self._set_text(self.current_content or fallback.get(state, "正在读取总结…"))
@@ -373,7 +373,7 @@ class SummaryWizard:
         self.submitting = False
         body, actions, self.canvas = dialog_content(self.win, self.app)
         ttk.Label(body, text="你想总结什么？", font=(self.app.font_family, 18, "bold")).pack(anchor="w", pady=(0, 8))
-        ttk.Label(body, text="每个目标输出：问题背景、具体问题、目前实验结果、实验结论。", style="Muted.TLabel").pack(anchor="w", pady=(0, 20))
+        ttk.Label(body, text="按专项整理进展、结果与下一步，并附已有文档和图片。", style="Muted.TLabel").pack(anchor="w", pady=(0, 20))
         ttk.Radiobutton(body, text="正在进行的全部待办", variable=self.scope, value="active").pack(anchor="w", pady=4)
         ttk.Label(body, text="包括稍后处理的待办和手动待办。", style="Muted.TLabel").pack(anchor="w", padx=22, pady=(0, 10))
         ttk.Radiobutton(body, text="全部已保存任务（含完成、归档）", variable=self.scope, value="all").pack(anchor="w", pady=4)

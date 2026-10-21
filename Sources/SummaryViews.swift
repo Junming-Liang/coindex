@@ -11,7 +11,7 @@ struct SummaryWorkspaceView: View {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("总结").font(.system(size: 25, weight: .semibold)).tracking(-0.6)
-                    Text("问题背景、具体问题、目前实验结果、实验结论。").font(.system(size: 12)).foregroundStyle(Palette.muted)
+                    Text("按专项汇报进展、结果与下一步，整理文档和配图。").font(.system(size: 12)).foregroundStyle(Palette.muted)
                 }
                 Spacer()
                 Button { scheduling = true } label: {
@@ -58,7 +58,7 @@ struct SummaryWorkspaceView: View {
             Image(systemName: "doc.text").font(.system(size: 28, weight: .light)).foregroundStyle(Palette.accent)
                 .frame(width: 64, height: 64).background(Palette.accentWash, in: RoundedRectangle(cornerRadius: 18))
             Text("把进展整理成一份总结").font(.system(size: 18, weight: .semibold))
-            Text("选择待办和时间范围，按四个简短字段整理每个目标。支持只总结工作内容。")
+            Text("选择待办和时间范围，整理专项进展、实验结论和相关产物。支持只总结工作内容。")
                 .font(.system(size: 12)).foregroundStyle(Palette.muted).multilineTextAlignment(.center).frame(maxWidth: 330)
             Button("选择总结范围") { creating = true }.buttonStyle(CoindexButtonStyle(prominent: true))
         }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -292,7 +292,7 @@ struct SummaryComposer: View {
             }
             if preview.taskCount == 0 { Text("这个范围暂无待办，请返回选择其他时间。").font(.callout).foregroundStyle(Palette.muted) }
             if workOnly { Text("这是筛选前的数量；生成时识别工作内容，并保留排除原因供核对。").font(.caption).foregroundStyle(Palette.muted) }
-            Text("每个目标固定四项：问题背景、具体问题、目前实验结果、实验结论。每项一句，缺失内容明确标注。")
+            Text("按专项整理进展、结果与结论；有记录时附下一步、风险及文档和图片。未验证结果会明确标注。")
                 .font(.caption).foregroundStyle(Palette.muted)
             Text("使用 \(model.snapshot?.model ?? "gpt-6-luna") · \(model.snapshot?.effort ?? "max")，保留生成时的独立副本。")
                 .font(.caption).foregroundStyle(Palette.muted)
@@ -379,6 +379,7 @@ struct CoindexMarkdown: View {
                 else if text.hasPrefix("# ") { paragraph(String(text.dropFirst(2)), size: 19, weight: .semibold).padding(.top, 12) }
                 else if text == "---" { Divider().padding(.vertical, 8) }
                 else if text.isEmpty { Spacer().frame(height: 3) }
+                else if let image = SummaryMarkdownImage(text) { SummaryArtifactImage(image: image) }
                 else if text.hasPrefix("- ") || text.hasPrefix("* ") {
                     HStack(alignment: .top, spacing: 8) { Text("•"); paragraph(String(text.dropFirst(2))) }.padding(.leading, 4)
                 } else { paragraph(text) }
@@ -389,6 +390,54 @@ struct CoindexMarkdown: View {
         Text((try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text))
             .font(.system(size: size, weight: weight)).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct SummaryMarkdownImage {
+    let caption: String
+    let url: URL
+
+    init?(_ text: String) {
+        guard text.hasPrefix("!["), text.hasSuffix(")"), let separator = text.range(of: "](", options: .backwards) else { return nil }
+        caption = String(text[text.index(text.startIndex, offsetBy: 2)..<separator.lowerBound])
+        let destination = String(text[separator.upperBound..<text.index(before: text.endIndex)])
+        if destination.hasPrefix("/"), !destination.hasPrefix("//"), let path = destination.removingPercentEncoding {
+            url = URL(fileURLWithPath: path)
+        } else if let value = URL(string: destination), ["http", "https"].contains(value.scheme?.lowercased() ?? ""), value.host != nil {
+            url = value
+        } else { return nil }
+    }
+}
+
+private struct SummaryArtifactImage: View {
+    let image: SummaryMarkdownImage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if image.url.isFileURL {
+                if let loaded = NSImage(contentsOf: image.url) { preview(Image(nsImage: loaded)) }
+                else { unavailable }
+            } else {
+                AsyncImage(url: image.url) { phase in
+                    if let loaded = phase.image { preview(loaded) }
+                    else if phase.error != nil { unavailable }
+                    else { ProgressView().controlSize(.small).padding(12) }
+                }
+            }
+            Text((try? AttributedString(markdown: image.caption)) ?? AttributedString(image.caption))
+                .font(.caption).foregroundStyle(Palette.muted)
+            Link("打开原图", destination: image.url).font(.caption)
+        }.padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func preview(_ value: Image) -> some View {
+        value.resizable().scaledToFit().frame(maxWidth: 660, maxHeight: 360, alignment: .leading)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var unavailable: some View {
+        Label("图片暂不可预览，可打开原图查看", systemImage: "photo")
+            .font(.caption).foregroundStyle(Palette.muted)
     }
 }
 
