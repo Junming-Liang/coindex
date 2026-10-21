@@ -25,8 +25,9 @@ def stamp(value):
 
 def response(prompt, schema, **kwargs):
     data = json.loads(prompt.split("<untrusted_summary_data>")[1].split("</untrusted_summary_data>")[0])
-    return {"items": [dict(id=t["id"], background="验证上传性能", problem="上传耗时过长", results="已提交实验，暂无结果记录",
-                           conclusion="尚无可验证结论", relevance="work", relevance_reason="工作实验", evidence_indices=[0])
+    return {"items": [dict(id=t["id"], progress="已提交上传性能实验，正在排队", results="实验尚未完成，暂无可验证结果",
+                           next_step="待实验结束后核对性能报告", risks="", artifacts=[],
+                           relevance="work", relevance_reason="工作实验", evidence_indices=[0])
                       for t in data["tasks"]]}
 
 
@@ -139,6 +140,132 @@ class SummaryTests(unittest.TestCase):
         self.assertNotIn("本条无效输出不能被保存", result["content"])
         self.assertEqual(result["sources"][0]["evidence_indices"], [0])
 
+    def test_report_pairs_documents_and_images_with_their_goal(self):
+        # Space-containing file destinations use Markdown's angle-bracket form.
+        ident = self.store.save_manual("降低批处理耗时", "已生成[分析文档](https://docs.example.org/wiki/batch)与"
+            "![耗时对比](</workspace/output/batch chart.png>)")
+        before = tuple(self.store.db.execute("SELECT * FROM tasks WHERE id=?", (ident,)).fetchone())
+        sid = summaries.create(self.store, {"scope": "active"}, now=self.now)
+        def with_artifacts(prompt, schema, **kwargs):
+            value = response(prompt, schema, **kwargs)
+            value["items"][0].update(results="同一批20组样本，耗时由12分钟降到9分钟，个别场景仍有回退。",
+                next_step="", artifacts=[{"index": 0, "caption": "分析文档：方法与同批对照结果"},
+                                         {"index": 1, "caption": "耗时对比图"}])
+            return value
+        summaries.run(self.store, sid, with_artifacts)
+        result = summaries.detail(self.store, sid)
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("## 1. 降低批处理耗时", result["content"])
+        self.assertIn("[分析文档：方法与同批对照结果](https://docs.example.org/wiki/batch)", result["content"])
+        self.assertIn("![耗时对比图](/workspace/output/batch%20chart.png)", result["content"])
+        self.assertLess(result["content"].index("分析文档：方法"), result["content"].index("![耗时对比图]"))
+        self.assertNotIn("**下一步**", result["content"])
+        self.assertIn("个别场景仍有回退", result["content"])
+        self.assertEqual([a["kind"] for a in result["sources"][0]["selected_artifacts"]], ["document", "image"])
+        self.assertEqual(result["sources"][0]["selected_artifacts"][1]["record_indices"], [0])
+        self.assertEqual(tuple(self.store.db.execute("SELECT * FROM tasks WHERE id=?", (ident,)).fetchone()), before)
+
+    def test_artifact_candidates_are_deduplicated_safe_and_resolve_relative_paths(self):
+        source = {"cwd": "/workspace/project", "artifact": "https://docs.example.org/wiki/report", "records": [
+            {"index": 0}, {"index": 1, "text": "[报告](https://docs.example.org/wiki/report)\n"
+             "![对比](./figures/compare.png)\n[计划](javascript:alert(1))\n"
+             "https://user:password@example.org/report\nhttps://example.org/data?access_token=secret\n"
+             "https://example.org/data?signature=secret\n[data](data:image/png;base64,AAAA)\n"
+             "https://example.org/metric?sid=example\n`reports/result.md`\n"
+             "配图：/workspace/project/figures/compare.png\n[空格路径](/workspace/project/space%20chart.png)"}]}
+        artifacts = summaries.collect_artifacts(source)
+        self.assertEqual([a["target"] for a in artifacts], ["https://docs.example.org/wiki/report",
+            "/workspace/project/figures/compare.png", "/workspace/project/space chart.png",
+            "https://example.org/metric?sid=example", "/workspace/project/reports/result.md"])
+        self.assertEqual(artifacts[0]["record_indices"], [0, 1])
+        self.assertEqual(artifacts[1]["kind"], "image")
+        self.assertEqual(summaries.artifact_target("HTTPS://example.org/report.md"), "https://example.org/report.md")
+        for value in ("javascript:alert(1)", "file:///etc/passwd", "//example.org/file.png", "https://example.org:bad/file",
+                      "https://[bad/file", "https://example.org/file\n.png", "https://example.org/?api_key=[REDACTED]"):
+            self.assertIsNone(summaries.artifact_target(value))
+
+    def test_artifact_selection_requires_own_candidates_and_matching_evidence(self):
+        self.manual()
+        sources = summaries.select_sources(self.store, summaries.options({"scope": "active"}, self.now), True)
+        source = sources[0]
+        source["records"].append({"index": 1, "text": "已生成[报告](https://example.org/report.md)"})
+        source["artifacts"] = summaries.collect_artifacts(source)
+        prompt = "<untrusted_summary_data>" + json.dumps({"tasks": sources}) + "</untrusted_summary_data>"
+        item = response(prompt, None)["items"][0]
+        item["artifacts"] = [{"index": 0, "caption": "实验报告"}]
+        with self.assertRaisesRegex(ValueError, "缺少对应记录依据"):
+            summaries.validate_items({"items": [item]}, sources)
+        item["evidence_indices"] = [0, 1]
+        self.assertEqual(summaries.validate_items({"items": [item]}, sources), [item])
+        for selection in ([{"index": 999, "caption": "无中生有"}], [{"index": True, "caption": "布尔编号"}],
+                          [{"index": 0, "caption": "重复"}] * 2,
+                          [{"index": 0, "caption": "篡改", "target": "https://evil.example.org"}]):
+            item["artifacts"] = selection
+            with self.assertRaises(ValueError):
+                summaries.validate_items({"items": [item]}, sources)
+        # The same integer on a different task does not grant access to its artifact.
+        other = dict(source, id="other", artifacts=[])
+        item["id"], item["artifacts"] = "other", [{"index": 0, "caption": "跨任务引用"}]
+        with self.assertRaisesRegex(ValueError, "产物编号无效"):
+            summaries.validate_items({"items": [item]}, [other])
+
+    def test_schema_binds_artifacts_and_forces_empty_selection_without_candidates(self):
+        self.manual()
+        sources = summaries.select_sources(self.store, summaries.options({"scope": "active"}, self.now), True)
+        extra = dict(sources[0], id="with-artifact", artifacts=[{"index": 3, "record_indices": [0]}])
+        branches = summaries.batch_schema(sources + [extra])["properties"]["items"]["items"]["anyOf"]
+        self.assertEqual(branches[0]["properties"]["artifacts"]["maxItems"], 0)
+        self.assertEqual(branches[1]["properties"]["artifacts"]["items"]["properties"]["index"]["enum"], [3])
+
+    def test_final_deliverables_survive_long_message_truncation(self):
+        conv = conversation(updated=self.now)
+        conv["messages"][-1]["text"] += "已完成分析。" + "长说明" * 2400 + "\n[最终文档](https://example.org/report.md)\n![对比图](/workspace/comparison.png)"
+        self.store.ingest(dict(host="mac", files={}, conversations=[conv], total_files=1, remaining_files=0, root="/example"))
+        self.store.reconcile([entry()], [conv])
+        source = summaries.select_sources(self.store, summaries.options({"scope": "active"}, self.now), True)[0]
+        self.assertTrue(source["context_limited"])
+        self.assertTrue(source["records"][-1]["truncated"])
+        self.assertIn("https://example.org/report.md", [a["target"] for a in source["artifacts"]])
+        self.assertIn("/workspace/comparison.png", [a["target"] for a in source["artifacts"]])
+
+    def test_truncation_does_not_turn_a_partial_url_or_path_into_an_artifact(self):
+        for prefix in ("已生成 https://example.org/partial", "已生成 /workspace/partial.png"):
+            source = {"records": [{"index": 0}, {"index": 1, "truncated": True,
+                "text": prefix + summaries.CONTEXT_GAP + "[完整文档](https://example.org/report.md)"}]}
+            self.assertEqual([a["target"] for a in summaries.collect_artifacts(source)], ["https://example.org/report.md"])
+
+    def test_remote_image_paths_remain_qualified_text_and_captions_cannot_inject_markup(self):
+        self.store.save_manual("远端实验", "![结果](/workspace/result.png)")
+        sid = summaries.create(self.store, {"scope": "active"}, now=self.now)
+        row = self.store.db.execute("SELECT * FROM summaries WHERE id=?", (sid,)).fetchone()
+        sources = json.loads(row["sources"])
+        sources[0]["host"] = "training-server"
+        prompt = "<untrusted_summary_data>" + json.dumps({"tasks": sources}) + "</untrusted_summary_data>"
+        items = response(prompt, None)["items"]
+        items[0]["artifacts"] = [{"index": 0, "caption": "[伪链接](javascript:alert(1))"}]
+        summaries.validate_items({"items": items}, sources)
+        content, _, _ = summaries.render_report(row, sources, items)
+        self.assertIn("training-server", content)
+        self.assertIn("/workspace/result.png", content)
+        self.assertNotIn("![", content)
+        self.assertNotIn("[伪链接](javascript:", content)
+
+    def test_invalid_artifact_retry_never_saves_partial_report(self):
+        self.manual()
+        sid = summaries.create(self.store, {"scope": "active"}, now=self.now)
+        calls = []
+        def invalid(prompt, schema, **kwargs):
+            calls.append(prompt)
+            result = response(prompt, schema, **kwargs)
+            result["items"][0]["artifacts"] = [{"index": 0, "caption": "不存在的产物"}]
+            return result
+        summaries.run(self.store, sid, invalid)
+        result = summaries.detail(self.store, sid)
+        self.assertEqual(len(calls), summaries.VALIDATION_ATTEMPTS)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["content"], "")
+        self.assertIn('"artifacts": []', calls[-1])
+
     def test_cancelling_invalid_response_prevents_corrective_model_calls(self):
         self.manual()
         sid = summaries.create(self.store, {"scope": "active"}, now=self.now)
@@ -188,7 +315,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(result["counts"], {"open": 1})
         self.assertEqual(tuple(self.store.db.execute("SELECT * FROM tasks WHERE id=?", (ident,)).fetchone()), before)
 
-    def test_frozen_sources_manual_title_model_and_four_fields(self):
+    def test_frozen_sources_manual_title_model_and_progress_report(self):
         ident = self.manual("自定义整体目标")
         summary_id = summaries.create(self.store, {"scope": "active"}, now=self.now)
         self.store.save_manual("修改后的标题", entity_id=ident)
@@ -198,8 +325,11 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertIn("自定义整体目标", result["content"])
         self.assertNotIn("修改后的标题", result["content"])
-        for label, _ in summaries.FIELDS.values():
-            self.assertIn(label, result["content"])
+        for key, (label, _) in summaries.FIELDS.items():
+            if key not in summaries.OPTIONAL_FIELDS:
+                self.assertIn(label, result["content"])
+        self.assertNotIn("风险与阻塞", result["content"])
+        self.assertNotIn("问题背景", result["content"])
         self.assertEqual(model.call_args.kwargs["settings"]["analysis_model"], "gpt-6-luna")
         self.assertEqual(model.call_args.kwargs["settings"]["analysis_effort"], "max")
         self.assertNotIn("content", summaries.history(self.store)[0])
@@ -239,7 +369,7 @@ class SummaryTests(unittest.TestCase):
         def missing(value): value["items"].pop()
         def duplicate(value): value["items"][1] = dict(value["items"][0])
         def invented(value): value["items"][0]["evidence_indices"] = [999]
-        def verbose(value): value["items"][0]["results"] = "长" * 81
+        def verbose(value): value["items"][0]["results"] = "长" * (summaries.FIELDS["results"][1] + 1)
         for modify in (missing, duplicate, invented, verbose):
             summary_id = summaries.create(self.store, {"scope": "active"}, now=self.now)
             def invalid(*args, **kwargs):
@@ -257,7 +387,7 @@ class SummaryTests(unittest.TestCase):
         with patch("summaries.generate_json", side_effect=response) as model:
             summaries.run(self.store, sid)
         self.assertEqual(model.call_count, 2)
-        self.assertEqual(summaries.detail(self.store, sid)["content"].count("**问题背景**"), summaries.BATCH_SIZE + 1)
+        self.assertEqual(summaries.detail(self.store, sid)["content"].count("**进展**"), summaries.BATCH_SIZE + 1)
         sid = summaries.create(self.store, {"scope": "active"}, now=self.now)
         calls = []
         def partial(*args, **kwargs):
@@ -345,7 +475,7 @@ prompt=sys.stdin.read()
 data=json.loads(prompt.split('<untrusted_summary_data>')[1].split('</untrusted_summary_data>')[0])
 pathlib.Path(MARKER).touch()
 if any(t['title']=='slow fixture' for t in data['tasks']): time.sleep(30)
-items=[dict(id=t['id'],background='工作验证',problem='性能不足',results='暂无实验结果记录',conclusion='尚无可验证结论',relevance='work',relevance_reason='工作实验',evidence_indices=[0]) for t in data['tasks']]
+items=[dict(id=t['id'],progress='已提交性能实验',results='暂无可验证结果',next_step='',risks='',artifacts=[],relevance='work',relevance_reason='工作实验',evidence_indices=[0]) for t in data['tasks']]
 pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(json.dumps({'items':items}))
 '''.replace("MARKER", repr(str(self.marker))))
         self.fixture.chmod(0o700)

@@ -1014,7 +1014,7 @@ class CoindexApp:
             if name == "summaries":
                 self.summary_page.pack(fill="both", expand=True)
                 self.heading_var.set("总结")
-                self.summary_var.set("按目标整理问题背景、具体问题、目前实验结果和实验结论。")
+                self.summary_var.set("按专项整理进展、结果与下一步，并附已有文档和图片。")
                 self.summary_page.render()
             else:
                 self.conversation_page.pack(fill="both", expand=True)
