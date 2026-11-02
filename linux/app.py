@@ -1024,7 +1024,7 @@ class CoindexApp:
             if name == "task-map":
                 self.map_page.pack(fill="both", expand=True)
                 self.heading_var.set("任务导图")
-                self.summary_var.set("同类问题分组对齐，递进关系从左到右；点选任务查看停住位置与下一步。")
+                self.summary_var.set("每类问题一张图；定位、等待、校对仅显示在节点上。")
                 self.map_page.show()
             elif name == "summaries":
                 self.summary_page.pack(fill="both", expand=True)

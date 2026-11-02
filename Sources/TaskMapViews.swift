@@ -6,6 +6,7 @@ struct TaskMapWorkspaceView: View {
     @State private var scope = "active"
     @State private var search = ""
     @State private var selected: String?
+    @State private var topicId = ""
     @State private var zoom = 1.0
     @State private var autoFit = true
     @State private var viewport = CGSize(width: 900, height: 600)
@@ -27,7 +28,7 @@ struct TaskMapWorkspaceView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 5) {
                         Text("任务导图").font(.system(size: 25, weight: .semibold)).tracking(-0.6)
-                        Text("同类问题分组对齐，递进关系从左向右。")
+                        Text("每类问题一张图；阶段只作为节点状态。")
                             .font(.system(size: 12)).foregroundStyle(Palette.muted)
                     }
                     Spacer()
@@ -35,10 +36,20 @@ struct TaskMapWorkspaceView: View {
                         Button("中止分析") { load("task_map_cancel") }.disabled(loading)
                     }
                     Button { load("task_map_analyze") } label: {
-                        Label(graph?.analysed == true ? "重新分析关系" : "分析关系", systemImage: "sparkles")
+                        Label(graph?.analysed == true ? "重新分图" : "按问题类型分图", systemImage: "sparkles")
                     }.buttonStyle(CoindexButtonStyle(prominent: true))
                         .disabled(loading || graph?.busy == true || graph?.nodes.isEmpty != false || model.isDemo)
                         .accessibilityIdentifier("task-map-analyze")
+                }
+                if let graph, !graph.topics.isEmpty {
+                    HStack(spacing: 12) {
+                        Text("问题类型").font(.system(size: 12, weight: .medium))
+                        Picker("问题类型", selection: Binding(get: { graph.selectedTopic }, set: { selectTopic($0) })) {
+                            ForEach(graph.topics) { topic in Text("\(topic.title) · \(topic.count) 项").tag(topic.id) }
+                        }.labelsHidden().frame(maxWidth: 360).accessibilityIdentifier("task-map-topic")
+                        Text("切换类型，查看对应的独立导图").font(.caption).foregroundStyle(Palette.muted)
+                        Spacer()
+                    }
                 }
                 HStack(spacing: 12) {
                     Picker("范围", selection: $scope) {
@@ -57,7 +68,7 @@ struct TaskMapWorkspaceView: View {
                     Label("同类问题 · 虚线", systemImage: "link").foregroundStyle(Palette.muted)
                     Label("递进关系 · 箭头", systemImage: "arrow.right").foregroundStyle(Palette.accent)
                     Spacer()
-                    Text("\(visible.count) / \(graph?.nodes.count ?? 0) 个任务 · 归档 \(graph?.archivedCount ?? 0)")
+                    Text("本图 \(visible.count) 项 · 共 \(graph?.taskCount ?? 0) 项 · 归档 \(graph?.archivedCount ?? 0)")
                 }.font(.system(size: 11))
             }.padding(20).background(Palette.surface)
             Divider()
@@ -92,7 +103,7 @@ struct TaskMapWorkspaceView: View {
             }
         }.background(Palette.canvas)
             .onAppear { load() }
-            .onChange(of: scope) { _, _ in selected = nil; graph = nil; load(force: true) }
+            .onChange(of: scope) { _, _ in selected = nil; topicId = ""; graph = nil; load(force: true) }
             .onReceive(poll) { _ in load() }
             .onDisappear { requestSerial += 1; loading = false }
     }
@@ -102,9 +113,10 @@ struct TaskMapWorkspaceView: View {
         if !graph.error.isEmpty { return graph.error + "；原有关系和任务已保留。" }
         if graph.status == "queued" || graph.status == "running" { return "正在分析问题主题和连线；可以继续浏览或中止。" }
         if graph.busy { return "其他范围的导图正在分析，切回原范围可查看进度或中止。" }
+        if graph.classificationRequired { return "分类规则已更新，请重新按问题类型分图。原任务保持不变。" }
         if graph.outdated { return "任务已有变化，节点已同步；AI 连线来自上次分析，可重新分析。" }
         if model.isDemo { return "演示数据 · 关系仅供预览，不会调用模型或修改任务。" }
-        return graph.analysed ? "连线为 AI 归纳，点选节点查看两端依据；没有连线不代表不存在关联。" : "已按现有任务阶段预排。点击“分析关系”识别同类问题与递进关系，会使用配置中的模型。"
+        return graph.analysed ? "当前只展示这一类问题；点选节点查看关联与递进依据。" : "尚未按问题类型分类。点击“按问题类型分图”，不按等待、校对等阶段分组。"
     }
 
     private func diagram(_ graph: TaskMapDocument) -> some View {
@@ -186,6 +198,14 @@ struct TaskMapWorkspaceView: View {
                         Text("起点记录：\(edge.sourceQuote)\n终点记录：\(edge.targetQuote)").font(.system(size: 11)).foregroundStyle(Palette.muted).textSelection(.enabled)
                     }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Palette.subtle, in: RoundedRectangle(cornerRadius: 9))
                 }
+                ForEach((graph?.externalLinks ?? []).filter { $0.nodeId == node.id }) { link in
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("跨图关联 · \(link.topicTitle)").font(.caption).foregroundStyle(Palette.muted)
+                        Button(link.otherTitle) { selectTopic(link.topicId, node: link.otherId) }.font(.system(size: 12, weight: .medium))
+                        Text(link.reason).font(.system(size: 12))
+                        Text("依据：\(link.sourceQuote)\n\(link.targetQuote)").font(.caption).foregroundStyle(Palette.muted)
+                    }
+                }
                 Text("连线不会合并任务，也不代表已确认的执行依赖。").font(.caption).foregroundStyle(Palette.muted)
             }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
         }.background(Palette.surface)
@@ -203,16 +223,22 @@ struct TaskMapWorkspaceView: View {
         requestSerial += 1
         let serial = requestSerial
         loading = true
-        model.requestTaskMap(method, scope: scope, jobId: graph?.jobId ?? "") { value, message in
+        model.requestTaskMap(method, scope: scope, jobId: graph?.jobId ?? "", topicId: topicId) { value, message in
             guard serial == requestSerial else { return }
             loading = false
             error = message ?? ""
             if let value, value != graph {
                 graph = value
+                topicId = value.selectedTopic
                 if autoFit { fit() }
                 if let selected, !value.nodes.contains(where: { $0.id == selected }) { self.selected = nil }
             }
         }
+    }
+
+    private func selectTopic(_ id: String, node: String? = nil) {
+        topicId = id; selected = node; search = ""
+        load(force: true)
     }
 
     private func fit() {

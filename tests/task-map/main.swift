@@ -10,6 +10,8 @@ func renderTaskMap() throws {
     let snapshot = try decoder.decode(Snapshot.self, from: Data(contentsOf: URL(fileURLWithPath: args[1])))
     let graph = snapshot.taskMap!
     precondition(!graph.nodes.isEmpty && graph.edges.contains { $0.kind == "progression" })
+    precondition(Set(graph.nodes.map(\.topic)).count == 1 && Set(graph.nodes.map(\.kind)).count > 1)
+    precondition(graph.topics.count > 1 && graph.taskCount > graph.nodes.count)
     let model = AppModel()
     model.snapshot = snapshot
     let output = URL(fileURLWithPath: args[2])

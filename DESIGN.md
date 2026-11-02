@@ -41,7 +41,7 @@ Primary button: new task / save / complete. Secondary controls: update, nudge, c
 
 ## Optional task map
 
-Keep the list as the default workspace and add an independent task-map navigation entry. Group related goals into aligned sections with uniform cards, compact grid spacing and original goal titles. Progression chains share a row where possible; links use shared horizontal/vertical routes, never curved or diagonal paths. Use solid arrows for progression and quiet dashed lines for thematic relationships. Preserve task state and fixed titles; analysis only annotates a separate cache. Search, fit-to-window, zoom and read-only details must work on both clients. macOS follows the existing light/dark palette; Ubuntu uses its established Tk theme.
+Keep the list as the default workspace and add an independent task-map navigation entry. Each semantic problem type has its own canvas, selected through the problem-type picker. Different stages of the same problem stay together; equal stages from different problems stay separate. Stage and status appear only on task badges and never select a graph. Pending tasks remain unclassified until analysis, and legacy stage-based caches require reclassification. Use uniform cards, compact grids and original goal titles. Progression chains share a row where possible; both clients draw the same horizontal/vertical routes. Cross-type relationships live in the inspector and navigate to another graph. Preserve task state, fixed titles and the separate analysis cache. macOS follows the existing light/dark palette; Ubuntu uses its established Tk theme.
 
 ## Brand
 
