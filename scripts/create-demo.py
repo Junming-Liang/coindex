@@ -3,6 +3,9 @@ import pathlib
 import sys
 import time
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "backend"))
+from taskmap import demo_document
+
 now = time.time()
 specs = [
     ("review", "dev-server", "验收文档全文搜索", "让用户按正文查找文档", "搜索功能已提交：PR #123", "在测试环境验证完整搜索流程", 2),
@@ -25,4 +28,5 @@ for i, (kind, host, title, detail, evidence, action, priority) in enumerate(spec
 snapshot = dict(tasks=tasks,conversations=conversations,hosts=[dict(id=h,status="online",detail="演示数据",checked_at=now,total_files=0,remaining_files=0,root="") for h in ["mac","build-server","dev-server","release-server"]],
     settings=dict(automatic=True,interval_seconds=1800,idle_minutes=10,batch_size=6,history_days=0,enabled_hosts=["mac","build-server","dev-server","release-server"],source_limit=120,workdays_only=True,work_hours_enabled=False,work_start_minutes=540,work_end_minutes=1080),
     model="gpt-6-luna",effort="max",pending_analysis=0,last_sync=now-60,last_analysis=now-60,model_error="",sync=dict(running=False,phase=""))
+snapshot["task_map"] = demo_document(tasks)
 pathlib.Path(sys.argv[1]).write_text(json.dumps(snapshot,ensure_ascii=False))

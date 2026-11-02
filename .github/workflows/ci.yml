@@ -36,6 +36,15 @@ jobs:
           build/pet-animation-tests
       - name: Task filtering and sidebar counts
         run: bash scripts/test-task-filtering.sh
+      - name: Render native task map in light and dark appearance
+        run: bash scripts/render-task-map.sh
+      - name: Retain native task map previews
+        uses: actions/upload-artifact@v7
+        with:
+          name: task-map-macos-preview
+          path: build/task-map-evidence
+          if-no-files-found: error
+          retention-days: 14
       - name: Universal application
         run: COINDEX_ARCHS="arm64 x86_64" bash scripts/build.sh
       - name: Package and verify public macOS application
@@ -58,6 +67,7 @@ jobs:
     timeout-minutes: 20
     env:
       CODEX_TODO_CODEX: /usr/bin/true
+      COINDEX_TASK_MAP_EVIDENCE: build/task-map-evidence
     steps:
       - uses: actions/checkout@v7
         with:
@@ -68,9 +78,16 @@ jobs:
       - name: Install Tk and headless desktop tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-tk xvfb desktop-file-utils fonts-noto-cjk
+          sudo apt-get install -y python3-tk xvfb desktop-file-utils fonts-noto-cjk scrot
       - name: Backend and Linux desktop regression tests
         run: xvfb-run -a python3 -m unittest discover -s tests -v
+      - name: Retain Linux task map preview
+        uses: actions/upload-artifact@v7
+        with:
+          name: task-map-linux-preview
+          path: build/task-map-evidence
+          if-no-files-found: error
+          retention-days: 14
       - name: Build Linux application bundle
         run: bash scripts/build-linux.sh
       - name: Install bundle in isolated user directories

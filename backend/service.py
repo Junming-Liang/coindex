@@ -21,6 +21,7 @@ from schedule import automatic_state, refresh_calendars, refresh_needed, off_dut
 from platform_paths import default_data_dir
 import summaries
 import updates
+import taskmap
 
 
 def collect_host(host, request, settings=None):
@@ -114,6 +115,8 @@ def serve(folder):
     summary_worker = None
     summary_worker_id = None
     update_worker = None
+    map_worker = None
+    map_worker_id = None
 
     def emit(value):
         with output_lock:
@@ -150,6 +153,7 @@ def serve(folder):
         stop_nudges()
         stop_summary()
         stop_update()
+        stop_map()
         store.put_meta("sync", {"running": False, "phase": ""})
         raise SystemExit(0)
 
@@ -249,6 +253,47 @@ def serve(folder):
             raise
         return summary_id
 
+    def reap_map():
+        nonlocal map_worker, map_worker_id
+        if map_worker and map_worker.poll() is not None:
+            taskmap.fail(store, map_worker_id, "导图进程已退出，可重新分析；原有导图已保留")
+            map_worker = None
+            map_worker_id = None
+
+    def stop_map(ident=None):
+        nonlocal map_worker, map_worker_id
+        ident = ident or map_worker_id
+        if ident:
+            taskmap.cancel(store, ident)
+        if map_worker and map_worker_id == ident:
+            pid = map_worker.pid
+            if map_worker.poll() is None:
+                try:
+                    os.killpg(pid, signal.SIGTERM)
+                    map_worker.wait(timeout=0.5)
+                except (ProcessLookupError, subprocess.TimeoutExpired):
+                    pass
+                finally:
+                    try: os.killpg(pid, signal.SIGKILL)
+                    except ProcessLookupError: pass
+                    try: map_worker.wait(timeout=1)
+                    except subprocess.TimeoutExpired: pass
+            map_worker = None
+            map_worker_id = None
+
+    def start_map(request):
+        nonlocal map_worker, map_worker_id
+        reap_map()
+        ident = taskmap.create(store, request)
+        try:
+            cmd = [sys.executable, str(pathlib.Path(__file__).resolve()), "--data-dir", str(folder), "task-map", "--map-id", ident]
+            map_worker = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            map_worker_id = ident
+        except Exception as error:
+            taskmap.fail(store, ident, error)
+            raise
+        return ident
+
     def stop_calendar():
         if calendar_worker and calendar_worker.poll() is None:
             try:
@@ -274,6 +319,7 @@ def serve(folder):
     store.recover_nudges()
     summaries.recover(store)
     updates.recover(store)
+    taskmap.recover(store)
     store.put_meta("sync", {"running": False, "phase": ""})
     for line in sys.stdin:
         request = {}
@@ -297,6 +343,7 @@ def serve(folder):
                 stop_children()
                 stop_calendar()
                 stop_summary()
+                stop_map()
                 store.put_meta("sync", {"running": False, "phase": "已下班", "finished_at": time.time()})
                 result = store.snapshot()
             elif action == "resume_workday":
@@ -312,8 +359,8 @@ def serve(folder):
                                         "finished_at": time.time()})
                 result = store.snapshot()
             elif action == "settings":
-                if ((worker and worker.poll() is None) or (summary_worker and summary_worker.poll() is None)) and any(k in request.get("values", {}) for k in ("codex_home", "codex_cli", "codex_app", "remote_hosts", "analysis_model", "analysis_effort")):
-                    raise ValueError("请先中止当前更新或总结，再修改连接设置")
+                if ((worker and worker.poll() is None) or (summary_worker and summary_worker.poll() is None) or (map_worker and map_worker.poll() is None)) and any(k in request.get("values", {}) for k in ("codex_home", "codex_cli", "codex_app", "remote_hosts", "analysis_model", "analysis_effort")):
+                    raise ValueError("请先中止当前更新、总结或导图分析，再修改连接设置")
                 store.save_settings(request.get("values", {}))
                 result = store.snapshot()
             elif action == "ssh_aliases":
@@ -399,6 +446,15 @@ def serve(folder):
                 continue
             elif action == "summary_preview":
                 result = summaries.preview(store, request)
+            elif action == "task_map_detail":
+                reap_map()
+                result = taskmap.detail(store, request)
+            elif action == "task_map_analyze":
+                start_map(request)
+                result = taskmap.detail(store, request)
+            elif action == "task_map_cancel":
+                stop_map(request["job_id"])
+                result = taskmap.detail(store, request)
             elif action == "summary_generate":
                 summary_id = start_summary(request)
                 result = {"summary_id": summary_id, "snapshot": store.snapshot()}
@@ -434,6 +490,7 @@ def serve(folder):
     stop_calendar()
     stop_nudges()
     stop_summary()
+    stop_map()
     stop_update()
     store.put_meta("sync", {"running": False, "phase": ""})
     store.db.close()
@@ -443,13 +500,14 @@ def serve(folder):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", default=str(default_data_dir()))
-    parser.add_argument("command", choices=["serve", "sync", "snapshot", "act", "diagnostics", "calendar-refresh", "nudge", "summarize", "update-check"])
+    parser.add_argument("command", choices=["serve", "sync", "snapshot", "act", "diagnostics", "calendar-refresh", "nudge", "summarize", "update-check", "task-map"])
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--collect-only", action="store_true")
     parser.add_argument("--action")
     parser.add_argument("--id")
     parser.add_argument("--action-id")
     parser.add_argument("--summary-id")
+    parser.add_argument("--map-id")
     parser.add_argument("--automatic", action="store_true")
     args = parser.parse_args()
     if args.command == "serve":
@@ -464,6 +522,12 @@ def main():
         store = Store(args.data_dir)
         try:
             summaries.run(store, args.summary_id)
+        finally:
+            store.db.close()
+    elif args.command == "task-map":
+        store = Store(args.data_dir)
+        try:
+            taskmap.run(store, args.map_id)
         finally:
             store.db.close()
     elif args.command == "nudge":

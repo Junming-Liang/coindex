@@ -116,6 +116,8 @@ class Store:
         self.db.commit()
         from summaries import init_schema
         init_schema(self)
+        from taskmap import init_schema as init_task_map
+        init_task_map(self)
 
     def meta(self, key, default=None):
         row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
