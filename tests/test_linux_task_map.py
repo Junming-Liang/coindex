@@ -31,7 +31,8 @@ class TaskMapUITests(unittest.TestCase):
         before = copy.deepcopy(self.app.snapshot["tasks"])
         self.assertTrue(self.page.winfo_manager())
         self.assertFalse(self.app.task_page.winfo_manager())
-        self.assertEqual(len(self.page.document["nodes"]), len(before))
+        self.assertEqual(self.page.document["task_count"], len(before))
+        self.assertEqual(len({n["topic"] for n in self.page.document["nodes"]}), 1)
         if os.environ.get("COINDEX_TASK_MAP_EVIDENCE"):
             folder = pathlib.Path(os.environ["COINDEX_TASK_MAP_EVIDENCE"])
             folder.mkdir(parents=True, exist_ok=True)
@@ -56,7 +57,7 @@ class TaskMapUITests(unittest.TestCase):
         self.assertEqual(self.page.zoom, 1.2)
         self.assertEqual(self.page.canvas.yview(), scroll)
         self.page.search.set("no such task")
-        self.assertIn("0 /", self.page.counter.get())
+        self.assertIn("本图 0 项", self.page.counter.get())
         self.page.search.set("")
         self.assertGreater(len(self.page.canvas.find_all()), 0)
 
@@ -74,6 +75,16 @@ class TaskMapUITests(unittest.TestCase):
         old({"result": dict(current, scope="active", nodes=[])})
         self.assertEqual(self.page.document["scope"], "all")
         self.assertTrue(self.page.document["nodes"])
+
+    def test_problem_selector_switches_independent_graphs_instead_of_stage_groups(self):
+        first = self.page.document
+        self.assertEqual(len({n["topic"] for n in first["nodes"]}), 1)
+        self.assertGreater(len({n["kind"] for n in first["nodes"]}), 1)
+        target = next(t for t in first["topics"] if t["title"] == "图片上传")
+        self.page.choose_topic(target["id"])
+        self.assertEqual({n["topic"] for n in self.page.document["nodes"]}, {"图片上传"})
+        self.assertEqual(len({n["kind"] for n in self.page.document["nodes"]}), 2)
+        self.assertEqual(self.page.document["task_count"], first["task_count"])
 
 
 if __name__ == "__main__": unittest.main()

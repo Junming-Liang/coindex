@@ -16,6 +16,9 @@ class TaskMapPage(ttk.Frame):
         self.app = app
         self.document = None
         self.selected_id = None
+        self.selected_topic_id = ""
+        self.topic_labels = {}
+        self.topic = tk.StringVar()
         self.zoom = 1.0
         self.auto_fit = True
         self.serial = 0
@@ -34,9 +37,16 @@ class TaskMapPage(ttk.Frame):
         ttk.Label(controls, text="搜索").pack(side="left", padx=(0, 6))
         entry = ttk.Entry(controls, textvariable=self.search)
         entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        self.analyze_button = ttk.Button(controls, text="分析关系", style="Accent.TButton", command=self.analyze)
+        self.analyze_button = ttk.Button(controls, text="按问题类型分图", style="Accent.TButton", command=self.analyze)
         self.analyze_button.pack(side="right")
         self.cancel_button = ttk.Button(controls, text="中止分析", command=self.cancel)
+        topic_row = ttk.Frame(self)
+        topic_row.pack(fill="x", pady=(0, 10))
+        ttk.Label(topic_row, text="问题类型").pack(side="left", padx=(0, 8))
+        self.topic_box = ttk.Combobox(topic_row, textvariable=self.topic, state="readonly", width=32)
+        self.topic_box.pack(side="left", padx=(0, 12))
+        self.topic_box.bind("<<ComboboxSelected>>", lambda _e: self.choose_topic(self.topic_labels.get(self.topic.get(), "")))
+        ttk.Label(topic_row, text="每类一张图，阶段只作节点状态", style="Muted.TLabel").pack(side="left")
         legend = ttk.Frame(self)
         legend.pack(fill="x", pady=(0, 10))
         ttk.Label(legend, text="··· 同类问题    → 递进关系", style="Muted.TLabel").pack(side="left")
@@ -70,6 +80,8 @@ class TaskMapPage(ttk.Frame):
         self.text = tk.Text(self.inspector, wrap="word", width=27, font=(app.font_family, 10), bg=app.SURFACE,
                             fg=app.INK, relief="flat", padx=12, pady=12, state="disabled")
         self.text.pack(fill="both", expand=True)
+        self.crosslinks = ttk.Frame(self.inspector)
+        self.crosslinks.pack(fill="x")
         self.list_button = ttk.Button(self.inspector, text="在列表中查看", command=self.show_in_list)
         self.list_button.pack(fill="x", pady=(10, 0))
         self.canvas.bind("<Button-1>", lambda _e: self.canvas.focus_set(), add=True)
@@ -103,8 +115,18 @@ class TaskMapPage(ttk.Frame):
         self.serial += 1
         self.inflight = False
         self.selected_id = None
+        self.selected_topic_id = ""
         self.document = None
         self.signature = None
+        self.refresh()
+
+    def choose_topic(self, ident, node=None):
+        self.serial += 1
+        self.inflight = False
+        self.selected_topic_id = ident
+        self.selected_id = node
+        self.signature = None
+        self.search.set("")
         self.refresh()
 
     def refresh(self, method="task_map_detail"):
@@ -112,12 +134,14 @@ class TaskMapPage(ttk.Frame):
             return
         if self.app.demo:
             from taskmap import demo_document
-            self.accept(self.app.snapshot.get("task_map") or demo_document(self.app.snapshot.get("tasks", [])))
+            documents = self.app.snapshot.get("task_maps", [])
+            value = next((d for d in documents if d["selected_topic"] == self.selected_topic_id), documents[0] if documents else None)
+            self.accept(value or demo_document(self.app.snapshot.get("tasks", []), self.selected_topic_id))
             return
         self.inflight = True
         self.serial += 1
         serial = self.serial
-        values = {"scope": SCOPES[self.scope.get()], "days": 7}
+        values = {"scope": SCOPES[self.scope.get()], "days": 7, "topic_id": self.selected_topic_id}
         if method == "task_map_cancel": values["job_id"] = (self.document or {}).get("job_id", "")
         def done(response):
             if not self.winfo_exists() or serial != self.serial: return
@@ -131,15 +155,17 @@ class TaskMapPage(ttk.Frame):
             self.status.set("服务暂时不可用，可以稍后重试；原有任务保持不变。")
 
     def accept(self, document):
-        self.analyze_button.configure(text="重新分析关系" if document.get("analysed") else "分析关系",
+        self.analyze_button.configure(text="重新分图" if document.get("analysed") else "按问题类型分图",
                                       state="disabled" if self.app.demo or document.get("busy") or not document.get("nodes") else "normal")
         self.cancel_button.configure(state="normal")
         signature = json.dumps(document, sort_keys=True, ensure_ascii=False)
         if signature == self.signature: return
         self.signature = signature
         self.document = document
-        self.analyze_button.configure(text="重新分析关系" if document.get("analysed") else "分析关系",
-                                      state="disabled" if self.app.demo or document.get("busy") or not document.get("nodes") else "normal")
+        self.selected_topic_id = document.get("selected_topic", "")
+        self.topic_labels = {"%s · %d 项" % (t["title"], t["count"]): t["id"] for t in document.get("topics", [])}
+        self.topic_box.configure(values=tuple(self.topic_labels))
+        self.topic.set(next((label for label, ident in self.topic_labels.items() if ident == self.selected_topic_id), ""))
         if document.get("status") in ("queued", "running"):
             self.cancel_button.pack(side="right", padx=(0, 8), before=self.analyze_button)
             self.status.set("正在分析问题主题和连线，可以继续浏览或中止。")
@@ -147,9 +173,10 @@ class TaskMapPage(ttk.Frame):
             self.cancel_button.pack_forget()
             self.status.set("演示数据 · 不会调用模型或修改任务。" if self.app.demo else
                             document.get("error") or ("其他范围的导图正在分析，切回原范围可查看进度或中止。" if document.get("busy") else
+                            "分类规则已更新，请重新按问题类型分图。原任务保持不变。" if document.get("classification_required") else
                             "任务已有变化，节点已同步；AI 连线来自上次分析，可重新分析。" if document.get("outdated") else
-                            "AI 归纳的关系；点选节点查看两端依据，未连线不代表不存在关联。" if document.get("analysed") else
-                            "已按任务阶段预排。点击“分析关系”识别同类问题与递进关系，会使用配置中的模型。"))
+                            "当前只展示这一类问题；点选节点查看关联与递进依据。" if document.get("analysed") else
+                            "尚未按问题类型分类。点击“按问题类型分图”，不按等待、校对等阶段分组。"))
         self.locator.configure(values=tuple(n["title"] for n in document.get("nodes", [])))
         if self.selected_id not in {n["id"] for n in document.get("nodes", [])}: self.selected_id = None
         self.draw()
@@ -189,7 +216,7 @@ class TaskMapPage(ttk.Frame):
         query = self.search.get().strip().casefold()
         nodes = [n for n in graph.get("nodes", []) if not query or query in " ".join(str(n.get(k, "")) for k in ("title", "detail", "progress", "next_action", "topic")).casefold()]
         visible = {n["id"]: n for n in nodes}
-        self.counter.set("%d / %d 项 · 归档 %d · %d%%" % (len(nodes), len(graph.get("nodes", [])), graph.get("archived_count", 0), int(z*100)))
+        self.counter.set("本图 %d 项 · 共 %d 项 · 归档 %d · %d%%" % (len(nodes), graph.get("task_count", 0), graph.get("archived_count", 0), int(z*100)))
         self.canvas.configure(scrollregion=(0, 0, graph.get("width", 640)*z, graph.get("height", 360)*z))
         if not nodes:
             self.canvas.create_text(24, 34, anchor="nw", text="没有匹配的任务，请调整搜索或范围。", fill=self.app.MUTED, font=(self.app.font_family, 11))
@@ -263,6 +290,7 @@ class TaskMapPage(ttk.Frame):
         self.canvas.yview_moveto(max(0, (node["y"]-60)/self.document["height"]))
 
     def update_inspector(self):
+        for child in self.crosslinks.winfo_children(): child.destroy()
         node = next((n for n in (self.document or {}).get("nodes", []) if n["id"] == self.selected_id), None)
         if not node:
             self.inspector.pack_forget()
@@ -273,6 +301,12 @@ class TaskMapPage(ttk.Frame):
             if self.selected_id in (edge["source"], edge["target"]):
                 lines += ["", "递进 →" if edge["kind"] == "progression" else "同类关联 ···", edge["reason"],
                           "起点记录："+edge["source_quote"], "终点记录："+edge["target_quote"]]
+        for link in self.document.get("external_links", []):
+            if link["node_id"] == self.selected_id:
+                lines += ["", "跨图关联："+link["topic_title"], link["other_title"], link["reason"],
+                          "依据："+link["source_quote"], link["target_quote"]]
+                ttk.Button(self.crosslinks, text="查看「"+link["topic_title"]+"」导图",
+                           command=lambda item=link: self.choose_topic(item["topic_id"], item["other_id"])).pack(fill="x", pady=(6, 0))
         lines += ["", "连线不会合并任务，也不代表已确认的执行依赖。"]
         value = "\n".join(lines)
         if self.text.get("1.0", "end-1c") != value:

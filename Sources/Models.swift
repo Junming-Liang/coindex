@@ -183,6 +183,7 @@ struct Snapshot: Decodable {
     let summarySchedule: SummarySchedule?
     let appUpdate: AppUpdate?
     var taskMap: TaskMapDocument? = nil
+    var taskMaps: [TaskMapDocument]? = nil
 }
 
 struct TaskMapDocument: Decodable, Equatable {
@@ -202,6 +203,30 @@ struct TaskMapDocument: Decodable, Equatable {
     let error: String
     let finishedAt: Double
     let archivedCount: Int
+    let topics: [TaskMapTopic]
+    let selectedTopic: String
+    let taskCount: Int
+    let classificationRequired: Bool
+    let externalLinks: [TaskMapExternalLink]
+}
+
+struct TaskMapTopic: Decodable, Identifiable, Equatable {
+    let id: String
+    let title: String
+    let count: Int
+}
+
+struct TaskMapExternalLink: Decodable, Identifiable, Equatable {
+    let id: String
+    let nodeId: String
+    let otherId: String
+    let otherTitle: String
+    let topicId: String
+    let topicTitle: String
+    let kind: String
+    let reason: String
+    let sourceQuote: String
+    let targetQuote: String
 }
 
 struct TaskMapNode: Decodable, Identifiable, Equatable {
