@@ -179,11 +179,14 @@ def layout(sources, data):
         lanes[topics.get(source["id"], LABELS.get(source["kind"], "其他任务"))].append(source)
     nodes, groups, top, max_columns = [], [], 20, 2
     parents = defaultdict(list)
+    progression_nodes = set()
     for edge in edges:
-        if edge["kind"] == "progression": parents[edge["target"]].append(edge["source"])
+        if edge["kind"] == "progression":
+            parents[edge["target"]].append(edge["source"])
+            progression_nodes.update((edge["source"], edge["target"]))
     for topic, tasks in sorted(lanes.items()):
         occupied, rows = defaultdict(set), {}
-        linked = any(rank[t["id"]] > 0 or parents[t["id"]] for t in tasks)
+        linked = any(t["id"] in progression_nodes for t in tasks)
         for index, task in enumerate(sorted(tasks, key=lambda t: (rank[t["id"]], t["title"], t["id"]))):
             col = rank[task["id"]] if linked else index % 2
             row = min((rows[parent] for parent in parents[task["id"]] if parent in rows), default=0) if linked else index // 2

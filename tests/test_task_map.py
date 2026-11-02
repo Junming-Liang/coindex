@@ -94,6 +94,16 @@ class TaskMapTests(unittest.TestCase):
             mutation(value)
             with self.assertRaises(ValueError): taskmap.validate(value, sources, sources, [])
 
+    def test_cross_topic_progression_still_moves_left_to_right(self):
+        sources = taskmap.sources_for(self.store, taskmap.selection({}))
+        a, b, c = sources
+        links = [edge(a, c), edge(b, c)]
+        data = {"topics": {a["id"]: "前置定位", b["id"]: "前置定位", c["id"]: "后续验证"}, "edges": links}
+        doc = taskmap.layout(sources, data)
+        positions = {n["id"]: n for n in doc["nodes"]}
+        for link in doc["edges"]:
+            self.assertLess(positions[link["source"]]["x"], positions[link["target"]]["x"])
+
     def test_invalid_model_output_is_corrected_and_persistent_failure_preserves_good_map(self):
         self.analyse()
         calls = []
