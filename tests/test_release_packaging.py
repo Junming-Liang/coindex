@@ -91,6 +91,7 @@ class ReleasePackagingTests(unittest.TestCase):
         (mac / "Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleShortVersionString": "1.10.0"}))
         (mac / "Contents/Resources/release.json").write_text(json.dumps({"version": "1.10.0", "platform": "macos"}))
         (mac / "Contents/Resources/backend/summaries.py").write_text("")
+        (mac / "Contents/Resources/backend/taskmap.py").write_text("")
         (mac / "Contents/Resources/backend/updates.py").write_text("")
         release.write_zip(self.root / names[0], release.archive_files(mac), mac, mac.name)
         linux = self.root / "coindex-linux"
@@ -99,12 +100,14 @@ class ReleasePackagingTests(unittest.TestCase):
         (linux / "linux").mkdir()
         (linux / "release.json").write_text(json.dumps({"version": "1.10.0", "platform": "linux"}))
         (linux / "backend/summaries.py").write_text("")
+        (linux / "backend/taskmap.py").write_text("")
+        (linux / "linux/mindmap.py").write_text("")
         (linux / "backend/updates.py").write_text("")
         (linux / "linux/summaries.py").write_text("")
         (linux / "scripts/install-linux.sh").write_text("")
         release.write_tar(self.root / names[1], linux)
         source = self.root / "source"
-        for name in ("Sources/SummaryViews.swift", "Sources/UpdateViews.swift", "backend/summaries.py", "backend/updates.py", "linux/app.py", "linux/summaries.py", "scripts/build.sh", "VERSION"):
+        for name in ("Sources/SummaryViews.swift", "Sources/TaskMapViews.swift", "Sources/UpdateViews.swift", "backend/summaries.py", "backend/taskmap.py", "backend/updates.py", "linux/app.py", "linux/summaries.py", "linux/mindmap.py", "scripts/build.sh", "VERSION"):
             target = source / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("1.10.0\n" if name == "VERSION" else "")

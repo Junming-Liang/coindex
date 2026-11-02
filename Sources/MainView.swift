@@ -14,6 +14,7 @@ struct MainView: View {
             Rectangle().fill(Palette.border).frame(width: 1)
             VStack(spacing: 0) {
                 if model.filter == "summaries" { SummaryWorkspaceView() }
+                else if model.filter == "task-map" { TaskMapWorkspaceView() }
                 else {
                     header
                     Rectangle().fill(Palette.border).frame(height: 1)
@@ -33,7 +34,7 @@ struct MainView: View {
                 }
                 footer
             }.frame(minWidth: 390, maxWidth: .infinity).background(Palette.canvas)
-            if let task = model.selectedTask, model.filter != "conversations", model.filter != "summaries" {
+            if let task = model.selectedTask, model.filter != "conversations", model.filter != "summaries", model.filter != "task-map" {
                 Rectangle().fill(Palette.border).frame(width: 1)
                 detail(task).frame(width: 332)
             }
@@ -94,11 +95,12 @@ struct MainView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         sectionLabel("记录")
                         nav("总结", "doc.text", "summaries", nil)
+                        nav("任务导图", "point.3.connected.trianglepath.dotted", "task-map", nil)
                         nav("稍后处理", "clock", "snoozed", nil)
                         nav("已完成 / 已忽略", "checkmark.circle", "completed", nil)
                         nav("所有对话", "text.bubble", "conversations", nil)
                     }
-                    if model.filter != "summaries" {
+                    if model.filter != "summaries" && model.filter != "task-map" {
                         VStack(alignment: .leading, spacing: 3) {
                             sectionLabel("对话来源")
                             Button { model.hostFilter = "all" } label: {

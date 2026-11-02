@@ -16,7 +16,7 @@ for ARCH in $ARCHS; do
   case "$ARCH" in arm64|x86_64) ;; *) printf 'Unsupported architecture: %s\n' "$ARCH" >&2; exit 1 ;; esac
   swiftc -swift-version 5 -O -sdk "$SDK" -target "$ARCH-apple-macosx14.0" \
     -module-cache-path "$PWD/build/module-cache" \
-    Sources/BrandGeometry.swift Sources/DesignSystem.swift Sources/Models.swift Sources/PetAnimation.swift Sources/Pets.swift Sources/AppModel.swift Sources/MainView.swift Sources/ConnectionViews.swift Sources/SummaryViews.swift Sources/UpdateViews.swift Sources/CodexTodoApp.swift \
+    Sources/BrandGeometry.swift Sources/DesignSystem.swift Sources/Models.swift Sources/PetAnimation.swift Sources/Pets.swift Sources/AppModel.swift Sources/MainView.swift Sources/ConnectionViews.swift Sources/SummaryViews.swift Sources/TaskMapViews.swift Sources/UpdateViews.swift Sources/CodexTodoApp.swift \
     -o "$PWD/build/coindex-$ARCH"
   BINARIES+=("$PWD/build/coindex-$ARCH")
 done

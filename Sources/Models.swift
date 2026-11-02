@@ -182,6 +182,63 @@ struct Snapshot: Decodable {
     let summaries: [TodoSummary]?
     let summarySchedule: SummarySchedule?
     let appUpdate: AppUpdate?
+    var taskMap: TaskMapDocument? = nil
+}
+
+struct TaskMapDocument: Decodable, Equatable {
+    let nodes: [TaskMapNode]
+    let edges: [TaskMapEdge]
+    let groups: [TaskMapGroup]
+    let width: Double
+    let height: Double
+    let nodeWidth: Double
+    let nodeHeight: Double
+    let scope: String
+    let status: String
+    let jobId: String
+    let busy: Bool
+    let analysed: Bool
+    let outdated: Bool
+    let error: String
+    let finishedAt: Double
+    let archivedCount: Int
+}
+
+struct TaskMapNode: Decodable, Identifiable, Equatable {
+    let id: String
+    let title: String
+    let detail: String
+    let progress: String
+    let nextAction: String
+    let kind: String
+    let status: String
+    let host: String
+    let conversationArchived: Bool
+    let topic: String
+    let x: Double
+    let y: Double
+    var stateTitle: String { status == "open" ? ["running":"进行中", "continue":"继续推进", "wait":"等待结果", "review":"结果校对", "decision":"需要决定", "manual":"手动任务"][kind] ?? kind : ["done":"已完成", "resolved":"已解决", "dismissed":"已忽略", "conversation_archived":"已归档", "conversation_closed":"已结束"][status] ?? status }
+}
+
+struct TaskMapEdge: Decodable, Identifiable, Equatable {
+    let id: String
+    let source: String
+    let target: String
+    let kind: String
+    let reason: String
+    let sourceField: String
+    let sourceQuote: String
+    let targetField: String
+    let targetQuote: String
+    let points: [[Double]]
+}
+
+struct TaskMapGroup: Decodable, Identifiable, Equatable {
+    let id: String
+    let title: String
+    let y: Double
+    let height: Double
+    let count: Int
 }
 
 func displayHost(_ host: String) -> String { ["mac":"这台 Mac","manual":"手动添加"][host] ?? host }

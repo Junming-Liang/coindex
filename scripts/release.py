@@ -168,7 +168,7 @@ def package(platform, root=ROOT):
     release = json.loads((resource / "release.json").read_text())
     if release.get("version") != value or release.get("platform") != platform:
         raise ValueError("Rebuild application: bundled release metadata does not match VERSION/platform")
-    required = [resource / "backend/service.py", resource / "backend/summaries.py", resource / "backend/updates.py", resource / "demo.json"]
+    required = [resource / "backend/service.py", resource / "backend/summaries.py", resource / "backend/taskmap.py", resource / "backend/updates.py", resource / "demo.json"]
     if platform == "macos":
         info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
         if info.get("CFBundleShortVersionString") != value or info.get("CFBundleVersion") != build_number(value):
@@ -178,7 +178,7 @@ def package(platform, root=ROOT):
         required += [app / "Contents/MacOS/coindex", resource / "AppIcon.icns"]
         output = root / "dist" / ("coindex-" + value + "-macos-universal.zip")
     else:
-        required += [app / "coindex", app / "linux/app.py", app / "linux/summaries.py", app / "scripts/install-linux.sh",
+        required += [app / "coindex", app / "linux/app.py", app / "linux/summaries.py", app / "linux/mindmap.py", app / "scripts/install-linux.sh",
                      app / "scripts/install-linux.py", app / "VERSION"]
         output = root / "dist" / ("coindex-" + value + "-linux.tar.gz")
     if not all(item.is_file() for item in required):
@@ -246,19 +246,22 @@ def validate_archives(directory, value):
         if info.get("CFBundleShortVersionString") != value or meta.get("version") != value or meta.get("platform") != "macos":
             raise ValueError("macOS archive version/platform mismatch")
         archive.getinfo("coindex.app/Contents/Resources/backend/summaries.py")
+        archive.getinfo("coindex.app/Contents/Resources/backend/taskmap.py")
         archive.getinfo("coindex.app/Contents/Resources/backend/updates.py")
     with tarfile.open(directory / names[1], "r:gz") as archive:
         meta = json.loads(archive.extractfile("coindex-linux/release.json").read())
         if meta.get("version") != value or meta.get("platform") != "linux":
             raise ValueError("Linux archive version/platform mismatch")
         archive.getmember("coindex-linux/backend/summaries.py")
+        archive.getmember("coindex-linux/backend/taskmap.py")
+        archive.getmember("coindex-linux/linux/mindmap.py")
         archive.getmember("coindex-linux/backend/updates.py")
         archive.getmember("coindex-linux/linux/summaries.py")
         archive.getmember("coindex-linux/scripts/install-linux.sh")
     with zipfile.ZipFile(directory / names[2]) as archive:
         if archive.read("coindex/VERSION").decode().strip() != value:
             raise ValueError("Source archive version mismatch")
-        for required in ("Sources/SummaryViews.swift", "Sources/UpdateViews.swift", "backend/summaries.py", "backend/updates.py", "linux/app.py", "linux/summaries.py", "scripts/build.sh"):
+        for required in ("Sources/SummaryViews.swift", "Sources/TaskMapViews.swift", "Sources/UpdateViews.swift", "backend/summaries.py", "backend/taskmap.py", "backend/updates.py", "linux/app.py", "linux/summaries.py", "linux/mindmap.py", "scripts/build.sh"):
             archive.getinfo("coindex/" + required)
 
 

@@ -499,6 +499,16 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func requestTaskMap(_ method: String = "task_map_detail", scope: String, jobId: String = "",
+                        completion: @escaping (TaskMapDocument?, String?) -> Void) {
+        if isDemo { completion(snapshot?.taskMap, nil); return }
+        request(method, values: ["scope": scope, "days": 7, "job_id": jobId], failure: { completion(nil, $0) }) { [weak self] data in
+            guard let self else { return }
+            do { completion(try self.decoder.decode(TaskMapDocument.self, from: data), nil) }
+            catch { completion(nil, "无法读取任务导图：\(error.localizedDescription)") }
+        }
+    }
+
     func generateSummary(_ values: [String: Any], completion: @escaping (String?) -> Void) {
         guard !isDemo else { completion("演示模式不会调用模型"); return }
         request("summary_generate", values: values, failure: { completion($0) }) { [weak self] data in

@@ -181,6 +181,8 @@ open -n /Applications/coindex.app --args --demo
 
 ### 下载应用
 
+左侧「任务导图」提供可选的二维任务视图：按主题查看同类问题，用虚线和箭头区分关联与递进，点选节点查看进度、停住位置和下一步。原待办列表继续保留。[使用说明](docs/task-map.md)
+
 1. 打开 [Releases](https://github.com/Junming-Liang/coindex/releases/latest)，点击发布说明顶部的 **macOS 安装包**，下载 `coindex-版本-macos-universal.dmg`。
 2. 双击打开 DMG，将 `coindex.app` 拖到旁边的 **Applications（应用程序）** 文件夹，再从应用程序中打开。安装完成后推出安装盘。升级前先退出旧版，拖入后选择替换。
 3. 安装 Python。已有 Python 3.9+ 可以直接使用；如果使用 [Homebrew](https://brew.sh/)，运行：

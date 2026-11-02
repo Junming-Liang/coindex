@@ -38,10 +38,12 @@ if tk is not None:
         from .design import apply_theme, RoundedPanel, Icon
         from .summaries import SummaryPage
         from .updates import UpdateController
+        from .mindmap import TaskMapPage
     except ImportError:  # Direct script entry point.
         from linux.design import apply_theme, RoundedPanel, Icon
         from linux.summaries import SummaryPage
         from linux.updates import UpdateController
+        from linux.mindmap import TaskMapPage
 
 
 
@@ -216,6 +218,7 @@ class StdioClient:
 class CoindexApp:
     BG, SURFACE, SIDEBAR = TOKENS["canvas"], TOKENS["surface"], TOKENS["sidebar"]
     BORDER, INK, MUTED, ACCENT = TOKENS["border"], TOKENS["ink"], TOKENS["muted"], TOKENS["accent"]
+    SUBTLE = TOKENS["subtle"]
 
     def __init__(self, root, data_dir=None, demo=False, client_factory=StdioClient, demo_data=None, smoke_test=False):
         self.root, self.demo = root, demo
@@ -312,6 +315,8 @@ class CoindexApp:
         self.nav_convs.pack(fill="x", padx=10, pady=2)
         self.nav_summaries = ttk.Button(records, text="总结", style="Nav.TButton", command=lambda: self._switch("summaries"))
         self.nav_summaries.pack(fill="x", padx=10, pady=2)
+        self.nav_map = ttk.Button(records, text="任务导图", style="Nav.TButton", command=lambda: self._switch("task-map"))
+        self.nav_map.pack(fill="x", padx=10, pady=2)
 
         brand = tk.Frame(sidebar, bg=self.SIDEBAR)
         brand.pack(fill="x", padx=20, pady=(20, 16))
@@ -409,6 +414,7 @@ class CoindexApp:
         self.task_page = ttk.Frame(content)
         self.conversation_page = ttk.Frame(content)
         self.summary_page = SummaryPage(content, self)
+        self.map_page = TaskMapPage(content, self)
         self.task_page.pack(fill="both", expand=True)
         task_split = ttk.Frame(self.task_page)
         task_split.pack(fill="both", expand=True)
@@ -501,6 +507,7 @@ class CoindexApp:
         self.history_button.configure(style="Selected.Nav.TButton" if self.tab == "tasks" and self.show_inactive else "Nav.TButton")
         self.nav_convs.configure(style="Selected.Nav.TButton" if self.tab == "conversations" else "Nav.TButton")
         self.nav_summaries.configure(style="Selected.Nav.TButton" if self.tab == "summaries" else "Nav.TButton")
+        self.nav_map.configure(style="Selected.Nav.TButton" if self.tab == "task-map" else "Nav.TButton")
 
     def _disable_mutations(self):
         if self.demo:
@@ -592,6 +599,8 @@ class CoindexApp:
         self._render_tasks()
         self._render_conversations()
         self.summary_page.render()
+        if self.tab == "task-map":
+            self.map_page.refresh()
         self.updates.observe()
         self._refresh_navigation()
 
@@ -995,8 +1004,9 @@ class CoindexApp:
         title.focus_set()
 
     def _switch(self, name):
+        self.map_page.hide()
         self.tab = name
-        for page in (self.task_page, self.conversation_page, self.summary_page):
+        for page in (self.task_page, self.conversation_page, self.summary_page, self.map_page):
             page.pack_forget()
         if name == "tasks":
             self.task_page.pack(fill="both", expand=True)
@@ -1011,7 +1021,12 @@ class CoindexApp:
             self.task_filters.pack_forget()
             self.result_label.pack_forget()
             self.primary_button.pack_forget()
-            if name == "summaries":
+            if name == "task-map":
+                self.map_page.pack(fill="both", expand=True)
+                self.heading_var.set("任务导图")
+                self.summary_var.set("同类问题分组对齐，递进关系从左到右；点选任务查看停住位置与下一步。")
+                self.map_page.show()
+            elif name == "summaries":
                 self.summary_page.pack(fill="both", expand=True)
                 self.heading_var.set("总结")
                 self.summary_var.set("按专项整理进展、结果与下一步，并附已有文档和图片。")
@@ -1154,6 +1169,7 @@ class CoindexApp:
         self.status_var.set(str(text)[:160])
 
     def close(self):
+        self.map_page.hide()
         if self.client:
             self.client.close()
         self.root.destroy()
