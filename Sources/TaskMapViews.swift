@@ -51,7 +51,7 @@ struct TaskMapWorkspaceView: View {
                     Button { autoFit = false; zoom = max(0.35, zoom-0.15) } label: { Image(systemName: "minus.magnifyingglass") }.help("缩小")
                     Text("\(Int(zoom*100))%").font(.caption.monospacedDigit()).frame(width: 42)
                     Button { autoFit = false; zoom = min(1.7, zoom+0.15) } label: { Image(systemName: "plus.magnifyingglass") }.help("放大")
-                    Button("适应窗口") { autoFit = true; fit() }.help("自动缩放，可用滚动条或触控板平移")
+                    Button("适应宽度") { autoFit = true; fit() }.help("保持文字清晰，可用滚动条或触控板平移")
                 }
                 HStack(spacing: 12) {
                     Label("同类问题 · 虚线", systemImage: "link").foregroundStyle(Palette.muted)
@@ -217,6 +217,6 @@ struct TaskMapWorkspaceView: View {
 
     private func fit() {
         guard let graph else { return }
-        zoom = max(0.65, min(1, min((viewport.width-20)/graph.width, (viewport.height-12)/graph.height)))
+        zoom = max(0.35, min(1, (viewport.width-20)/graph.width))
     }
 }

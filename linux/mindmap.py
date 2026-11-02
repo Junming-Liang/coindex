@@ -31,6 +31,7 @@ class TaskMapPage(ttk.Frame):
         scope = ttk.Combobox(controls, textvariable=self.scope, values=tuple(SCOPES), width=24, state="readonly")
         scope.pack(side="left", padx=(0, 10))
         scope.bind("<<ComboboxSelected>>", lambda _e: self.change_scope())
+        ttk.Label(controls, text="搜索").pack(side="left", padx=(0, 6))
         entry = ttk.Entry(controls, textvariable=self.search)
         entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.analyze_button = ttk.Button(controls, text="分析关系", style="Accent.TButton", command=self.analyze)
@@ -39,13 +40,13 @@ class TaskMapPage(ttk.Frame):
         legend = ttk.Frame(self)
         legend.pack(fill="x", pady=(0, 10))
         ttk.Label(legend, text="··· 同类问题    → 递进关系", style="Muted.TLabel").pack(side="left")
-        ttk.Button(legend, text="适应窗口", command=self.fit).pack(side="right")
+        ttk.Button(legend, text="适应宽度", command=self.fit).pack(side="right")
         ttk.Button(legend, text="＋", width=3, command=lambda: self.set_zoom(self.zoom+.15)).pack(side="right", padx=3)
         ttk.Button(legend, text="−", width=3, command=lambda: self.set_zoom(self.zoom-.15)).pack(side="right")
         ttk.Label(legend, textvariable=self.counter, style="Muted.TLabel").pack(side="right", padx=12)
         self.locator = ttk.Combobox(self, state="readonly")
         self.locator.pack(fill="x", pady=(0, 8))
-        self.locator.set("定位任务：可用键盘选择节点")
+        self.locator.set("定位任务…")
         self.locator.bind("<<ComboboxSelected>>", self.locate)
         ttk.Label(self, textvariable=self.status, style="Muted.TLabel", wraplength=660, justify="left").pack(anchor="w", pady=(0, 10))
         split = ttk.Frame(self)
@@ -169,8 +170,7 @@ class TaskMapPage(ttk.Frame):
     def fit(self):
         self.auto_fit = True
         if not self.document: return
-        self.zoom = max(.65, min(1.0, (max(100, self.canvas.winfo_width())-20)/self.document["width"],
-                                 (max(100, self.canvas.winfo_height())-12)/self.document["height"]))
+        self.zoom = max(.35, min(1.0, (max(100, self.canvas.winfo_width())-20)/self.document["width"]))
         self.draw()
 
     def wheel(self, event):
