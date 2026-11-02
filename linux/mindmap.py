@@ -145,7 +145,8 @@ class TaskMapPage(ttk.Frame):
         else:
             self.cancel_button.pack_forget()
             self.status.set("演示数据 · 不会调用模型或修改任务。" if self.app.demo else
-                            document.get("error") or ("任务已有变化，节点已同步；AI 连线来自上次分析，可重新分析。" if document.get("outdated") else
+                            document.get("error") or ("其他范围的导图正在分析，切回原范围可查看进度或中止。" if document.get("busy") else
+                            "任务已有变化，节点已同步；AI 连线来自上次分析，可重新分析。" if document.get("outdated") else
                             "AI 归纳的关系；点选节点查看两端依据，未连线不代表不存在关联。" if document.get("analysed") else
                             "已按任务阶段预排。点击“分析关系”识别同类问题与递进关系，会使用配置中的模型。"))
         self.locator.configure(values=tuple(n["title"] for n in document.get("nodes", [])))

@@ -101,6 +101,7 @@ struct TaskMapWorkspaceView: View {
         guard let graph else { return "只读视图，不改变任务状态。" }
         if !graph.error.isEmpty { return graph.error + "；原有关系和任务已保留。" }
         if graph.status == "queued" || graph.status == "running" { return "正在分析问题主题和连线；可以继续浏览或中止。" }
+        if graph.busy { return "其他范围的导图正在分析，切回原范围可查看进度或中止。" }
         if graph.outdated { return "任务已有变化，节点已同步；AI 连线来自上次分析，可重新分析。" }
         if model.isDemo { return "演示数据 · 关系仅供预览，不会调用模型或修改任务。" }
         return graph.analysed ? "连线为 AI 归纳，点选节点查看两端依据；没有连线不代表不存在关联。" : "已按现有任务阶段预排。点击“分析关系”识别同类问题与递进关系，会使用配置中的模型。"

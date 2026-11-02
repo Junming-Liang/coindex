@@ -39,11 +39,11 @@ Sidebar 216pt, optional detail pane 332pt; default window 1200×820, minimum 960
 
 Primary button: new task / save / complete. Secondary controls: update, nudge, copy. Buttons, icon actions, sidebar rows and text actions use hover fills and a pointing-hand cursor. Disabled actions suppress hover/cursor feedback. Press feedback respects Reduce Motion. Hover borders distinguish interactive task cards, keyboard focus is visible, disabled controls retain their state. Search and host filtering show the visible result count. No-result state offers clear-search action. Existing keyboard shortcuts and accessibility identifiers remain available.
 
-## Brand
-
 ## Optional task map
 
 Keep the list as the default workspace and add an independent task-map navigation entry. Group related goals into aligned sections with uniform cards, compact grid spacing and original goal titles. Progression chains share a row where possible; links use shared horizontal/vertical routes, never curved or diagonal paths. Use solid arrows for progression and quiet dashed lines for thematic relationships. Preserve task state and fixed titles; analysis only annotates a separate cache. Search, fit-to-window, zoom and read-only details must work on both clients. macOS follows the existing light/dark palette; Ubuntu uses its established Tk theme.
+
+## Brand
 
 Original open C plus forward check mark, drawn from one shared normalized vector path in `Sources/BrandGeometry.swift`. The sidebar, app icon and monochrome menu bar icon share that geometry. The app icon uses a restrained indigo tile and is rendered at all native macOS sizes. No third-party logo or pet artwork is copied for the new brand.
 
