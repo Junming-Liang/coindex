@@ -8,6 +8,7 @@ import json
 import os
 import pathlib
 import queue
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -74,6 +75,7 @@ def demo_snapshot():
                 "batch_size": 6, "history_days": 0, "enabled_hosts": ["mac"], "workdays_only": True,
                 "work_hours_enabled": False, "work_start_minutes": 540, "work_end_minutes": 1080,
                 "codex_home": "", "codex_cli": "", "codex_app": "", "remote_hosts": [],
+                "claude_enabled": False, "claude_home": "",
                 "analysis_model": "gpt-6-luna", "analysis_effort": "max", "connection_setup_complete": False},
             "schedule": {"due": False, "summary": "演示模式", "next_at": None},
             "sync": {"running": False, "phase": ""}, "model": "gpt-6-luna", "effort": "max",
@@ -739,6 +741,12 @@ class CoindexApp:
             return "手动"
         return next((h.get("name") or host for h in self.snapshot.get("hosts", []) if h["id"] == host), host or "未知来源")
 
+    def _source_label(self, item):
+        label = self._host_label(item.get("host"))
+        if item.get("agent") == "claude":
+            label += " · Claude"
+        return label
+
     def _badge_colors(self, kind):
         colors = {"review": (self.ACCENT, TOKENS["accent_wash"]), "running": ("#2F7298", "#EAF3F9"),
                   "continue": ("#93672C", "#FAF1E2"), "decision": ("#79539D", "#F2ECF8")}
@@ -760,7 +768,7 @@ class CoindexApp:
         meta.pack(fill="x", pady=(0, 9))
         badge = self._badge(meta, task.get("kind"))
         badge.pack(side="left")
-        host = tk.Label(meta, text=self._host_label(task.get("host")), bg=self.SURFACE, fg=self.MUTED,
+        host = tk.Label(meta, text=self._source_label(task), bg=self.SURFACE, fg=self.MUTED,
                         font=(self.font_family, 9))
         host.pack(side="right")
         title = tk.Label(frame, text=task.get("title", "未命名待办"), bg=self.SURFACE, fg=self.INK,
@@ -799,7 +807,7 @@ class CoindexApp:
     def _update_task_card(self, card, task):
         ink, fill = self._badge_colors(task.get("kind"))
         card.labels["badge"].configure(text=self._kind_label(task.get("kind")), fg=ink, bg=fill)
-        for name, value in (("host", self._host_label(task.get("host"))), ("title", task.get("title", "未命名待办")),
+        for name, value in (("host", self._source_label(task)), ("title", task.get("title", "未命名待办")),
                             ("progress", task.get("progress") or task.get("detail") or "暂无进展记录"),
                             ("action", task.get("next_action") or "下一步尚未记录")):
             card.labels[name].configure(text=value)
@@ -824,7 +832,7 @@ class CoindexApp:
         signature = (task["id"], tuple(task.get(k) for k in
                      ("kind", "title", "status", "progress", "detail", "next_action", "evidence", "artifact", "conversation_title",
                       "priority", "conversation_id", "thread_id")),
-                     self._host_label(task.get("host")), task.get("snoozed_until", 0) > time.time(),
+                     self._source_label(task), task.get("snoozed_until", 0) > time.time(),
                      tuple((receipt or {}).get(k) for k in ("action_id", "status", "error", "attention")))
         if signature == self._detail_signature:
             return
@@ -840,7 +848,7 @@ class CoindexApp:
         self._badge(pane, task.get("kind")).pack(anchor="w", pady=(0, 12))
         tk.Label(pane, text=task.get("title", ""), bg=self.SURFACE, fg=self.INK, font=(self.font_family, 16, "bold"),
                  anchor="w", justify="left", wraplength=280).pack(fill="x")
-        tk.Label(pane, text=self._host_label(task.get("host")), bg=self.SURFACE, fg=self.MUTED,
+        tk.Label(pane, text=self._source_label(task), bg=self.SURFACE, fg=self.MUTED,
                  font=(self.font_family, 9), anchor="w").pack(fill="x", pady=(8, 18))
         buttons = []
         primary_actions = tk.Frame(pane, bg=self.SURFACE)
@@ -874,7 +882,7 @@ class CoindexApp:
         elif status == "conversation_archived":
             self._section(pane, "状态", "对话已归档，待办保留在历史记录中。")
         tk.Frame(pane, height=1, bg=self.BORDER).pack(fill="x", pady=(20, 14))
-        if status == "open" and task.get("snoozed_until", 0) <= time.time() and task.get("kind") != "manual":
+        if status == "open" and task.get("snoozed_until", 0) <= time.time() and task.get("kind") != "manual" and task.get("agent") != "claude":
             nudge_button = ttk.Button(pane, text="轻推原对话…", style="Quiet.TButton", command=lambda: self._nudge(task))
             nudge_button.pack(fill="x", pady=(0, 9))
             if pending_nudge:
@@ -1054,7 +1062,7 @@ class CoindexApp:
             if bool(conv.get("closed")) != self.conv_inactive_var.get():
                 continue
             title = conv.get("title") or "未命名对话"
-            host = self._host_label(conv.get("host"))
+            host = self._source_label(conv)
             state = "已结束" if conv.get("closed") else {"running": "进行中", "idle": "等待推进", "stopped": "已停止"}.get(conv.get("execution_state"), "待整理")
             iid = conv["id"]
             values = (host, state, self._age(conv.get("updated_at", 0)))
@@ -1102,17 +1110,27 @@ class CoindexApp:
 
     def open_conversation(self):
         if self.tab == "conversations":
-            conv = self._selected_conversation()
-            if not conv:
-                return
-            entity = conv["id"]
+            target = self._selected_conversation()
         else:
-            task = next((x for x in self.snapshot.get("tasks", []) if x["id"] == self.selected_task), None)
-            if not task or task.get("kind") == "manual":
-                return
-            entity = task["id"]
+            target = next((x for x in self.snapshot.get("tasks", []) if x["id"] == self.selected_task), None)
+            if target and target.get("kind") == "manual":
+                target = None
+        if not target:
+            return
+        if target.get("agent") == "claude":
+            if not self.demo:
+                self._claude_resume(target)
+            return
         if not self.demo:
-            self._rpc("open_thread", self._action_result, entity_id=entity)
+            self._rpc("open_thread", self._action_result, entity_id=target["id"])
+
+    def _claude_resume(self, target):
+        cwd = target.get("cwd") or ""
+        command = ("cd " + shlex.quote(cwd) + " && " if cwd else "") + "claude --resume " + shlex.quote(target.get("thread_id", ""))
+        if messagebox.askyesno("恢复 Claude 会话", "在终端中运行以下命令继续此对话：\n\n" + command + "\n\n点击“是”复制命令。", parent=self.root):
+            self.root.clipboard_clear()
+            self.root.clipboard_append(command)
+            self.status_var.set("已复制 Claude 恢复命令")
 
     def _action_result(self, response):
         if response.get("error"):
@@ -1222,6 +1240,9 @@ class SettingsDialog:
         self._entry("codex_cli", "Codex CLI 路径（留空自动查找）", self.saved.get("codex_cli", ""))
         self._entry("codex_app", "Codex 应用路径（可选）", self.saved.get("codex_app", ""))
         ttk.Button(self.section_body, text="检查本机连接", command=self._test_local).pack(anchor="w", pady=(10, 0))
+        self._header("Claude Code")
+        self._check("claude_enabled", "同时整理 Claude Code 会话", self.saved.get("claude_enabled", False))
+        self._entry("claude_home", "Claude 数据目录（留空自动使用 ~/.claude）", self.saved.get("claude_home", ""))
         self._header("分析模型")
         self._entry("analysis_model", "模型名称", self.saved.get("analysis_model", "gpt-6-luna"))
         effort = tk.StringVar(value=self.saved.get("analysis_effort", "max"))
@@ -1255,6 +1276,7 @@ class SettingsDialog:
         tk.Label(self.section_body, text=text, bg=self.app.SURFACE, fg=self.app.INK,
                  font=(self.app.font_family, 12, "bold")).pack(anchor="w", pady=(0, 6))
         descriptions = {"本机 Codex": "使用已有登录；留空路径可自动查找。", "分析模型": "用于整理目标、进度与下一步。",
+                        "Claude Code": "读取 Claude 的 projects 会话目录，与 Codex 待办合并展示；分析仍使用你的 Codex 模型。",
                         "自动检测": "只在设置的时间范围内检查变化。", "SSH 来源": "把其他机器上的对话汇集到同一个工作台。"}
         tk.Label(self.section_body, text=descriptions.get(text, ""), bg=self.app.SURFACE, fg=self.app.MUTED,
                  font=(self.app.font_family, 9), anchor="w", justify="left", wraplength=540).pack(fill="x", pady=(0, 10))
@@ -1404,8 +1426,8 @@ class SettingsDialog:
 class RemoteDialog:
     FIELDS = (("id", "连接标识（如 build-server）"), ("name", "显示名称"), ("hostname", "主机名或 IP"),
               ("user", "SSH 用户"), ("port", "SSH 端口（可留空）"), ("identity_file", "私钥路径（可留空）"),
-              ("codex_home", "远程 Codex 数据目录（可留空）"), ("python", "远程 Python（可留空）"),
-              ("host_id", "Codex 主机 ID（可选）"))
+              ("codex_home", "远程 Codex 数据目录（可留空）"), ("claude_home", "远程 Claude 数据目录（可留空）"),
+              ("python", "远程 Python（可留空）"), ("host_id", "Codex 主机 ID（可选）"))
 
     def __init__(self, settings_dialog, profile=None):
         self.settings = settings_dialog

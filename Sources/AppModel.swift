@@ -240,13 +240,13 @@ final class AppModel: ObservableObject {
     }
 
     func nudgeDisabled(_ task: TodoTask) -> Bool {
-        if isDemo || !task.isOpen || task.isManual || nudgePending(task) { return true }
+        if isDemo || !task.isOpen || task.isManual || task.isClaude || nudgePending(task) { return true }
         guard let record = latestNudge(task) else { return false }
         return record.status == "unknown" || (record.status == "sent" && Date().timeIntervalSince1970 - record.updatedAt < 30)
     }
 
     func nudge(_ task: TodoTask, retryUnknown: Bool = false) {
-        guard !isDemo, task.isOpen, !task.isManual, !nudgePending(task) else { return }
+        guard !isDemo, task.isOpen, !task.isManual, !task.isClaude, !nudgePending(task) else { return }
         requestingNudges.insert(task.conversationId)
         let values: [String:Any] = ["entity_id":task.id,"action_id":UUID().uuidString.lowercased(),"retry_unknown":retryUnknown]
         request("nudge", values:values, failure: { [weak self] message in
@@ -608,6 +608,13 @@ final class AppModel: ObservableObject {
                 if !NSWorkspace.shared.open(script) { self.showToast("无法打开终端，请检查 Terminal 设置") }
             } catch { self.showToast(error.localizedDescription) }
         })
+    }
+
+    func claudeResumeCommand(_ task: TodoTask) -> String {
+        let resume = "claude --resume " + task.threadId
+        guard !task.cwd.isEmpty else { return resume }
+        let quoted = "'" + task.cwd.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        return "cd " + quoted + " && " + resume
     }
 
     func openConversation(_ id: String, host: String = "mac") {

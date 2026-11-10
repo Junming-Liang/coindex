@@ -14,6 +14,9 @@ struct ConnectionSettingsView: View {
     @State private var message = ""
     @State private var editor: SSHConnection?
     @State private var editingExisting = false
+    @State private var claudeEnabled = false
+    @State private var claudeHome = ""
+    @State private var claudeMessage = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -51,6 +54,25 @@ struct ConnectionSettingsView: View {
                     if !message.isEmpty { Text(message).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
                 }
             }
+            SettingsSection("Claude Code 来源", symbol: "bubble.left.and.text.bubble.right") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("同时整理 Claude Code 会话", isOn: $claudeEnabled)
+                    pathField("Claude 数据目录", value: $claudeHome, placeholder: "自动使用 ~/.claude（或 CLAUDE_CONFIG_DIR）", directories: true)
+                    Text("读取 Claude 的 projects 会话目录，与 Codex 待办合并展示；分析仍使用你的 Codex 模型。Claude 待办暂不支持一键催办，可复制恢复命令在终端继续。")
+                        .font(.caption).foregroundStyle(Palette.muted)
+                    Button("保存 Claude 来源") {
+                        claudeMessage = ""
+                        model.saveConnections(["claude_enabled": claudeEnabled, "claude_home": claudeHome]) { error in
+                            claudeMessage = error ?? "已保存，下次更新时生效"
+                        }
+                    }.buttonStyle(CoindexButtonStyle()).disabled(model.syncing || model.isDemo)
+                    if let ready = result?.claudeReady {
+                        Text(ready ? "Claude 会话目录可读取" : "Claude 会话目录暂不可读取，请检查路径或先创建会话")
+                            .font(.caption).foregroundStyle(ready ? Palette.success : .orange)
+                    }
+                    if !claudeMessage.isEmpty { Text(claudeMessage).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
+                }
+            }
             SettingsSection("会话来源与 SSH", symbol: "desktopcomputer") {
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(model.snapshot?.hosts ?? []) { host in
@@ -76,7 +98,7 @@ struct ConnectionSettingsView: View {
                     }
                     Button { editingExisting = false; editor = .empty() } label: { Label("添加 SSH 机器…", systemImage: "plus") }
                         .disabled(model.syncing || model.isDemo)
-                    Text("连接你自己的机器后，直接读取其 Codex 会话。支持已有 SSH 别名、跳板机配置与自定义数据目录，远程需要 Python 3。")
+                    Text("连接你自己的机器后，直接读取其 Codex 会话（启用 Claude 来源时也包括 Claude 会话）。支持已有 SSH 别名、跳板机配置与自定义数据目录，远程需要 Python 3。")
                         .font(.caption).foregroundStyle(Palette.muted)
                 }
             }
@@ -87,6 +109,8 @@ struct ConnectionSettingsView: View {
             app = model.snapshot?.settings.codexApp ?? ""
             modelName = model.snapshot?.model ?? "gpt-6-luna"
             effort = model.snapshot?.effort ?? "max"
+            claudeEnabled = model.snapshot?.settings.claudeEnabled ?? false
+            claudeHome = model.snapshot?.settings.claudeHome ?? ""
         }
         .sheet(item: $editor) { connection in SSHConnectionEditor(connection: connection, existing: editingExisting) }
     }
@@ -192,6 +216,7 @@ struct SSHConnectionEditor: View {
                                 }
                             }
                             TextField("远程 Codex 数据目录（默认 ~/.codex）", text: $connection.codexHome)
+                            TextField("远程 Claude 数据目录（默认 ~/.claude）", text: Binding(get: { connection.claudeHome ?? "" }, set: { connection.claudeHome = $0 }))
                             TextField("远程 Python 路径（默认 python3）", text: $connection.python)
                             TextField("远程 Codex CLI 路径（催办时自动发现）", text: $connection.codexCli)
                             TextField("Codex 桌面主机 ID（可选）", text: $connection.hostId)

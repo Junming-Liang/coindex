@@ -25,8 +25,10 @@ struct TodoTask: Decodable, Identifiable {
     let path: String
     let summary: String
     let conversationUpdatedAt: Double
+    let agent: String?
     var isOpen: Bool { status == "open" }
     var isManual: Bool { kind == "manual" }
+    var isClaude: Bool { agent == "claude" }
     var isRunning: Bool { kind == "running" }
     var hasCustomTitle: Bool { titleOverride?.isEmpty == false }
     var stopPoint: String { (progress?.isEmpty == false ? progress : nil) ?? "停止位置待整理" }
@@ -50,6 +52,8 @@ struct Conversation: Decodable, Identifiable {
     let active: Bool
     let executionState: String?
     let needsAnalysis: Bool?
+    let agent: String?
+    var isClaude: Bool { agent == "claude" }
     var stateTitle: String {
         if archived == 1 { return "已归档，不再跟踪" }
         if closed == 1 { return "手动结束" }
@@ -85,6 +89,8 @@ struct TodoSettings: Decodable {
     var codexHome: String?
     var codexCli: String?
     var codexApp: String?
+    var claudeEnabled: Bool?
+    var claudeHome: String?
     var remoteHosts: [SSHConnection]?
     var analysisModel: String?
     var analysisEffort: String?
@@ -99,6 +105,7 @@ struct SSHConnection: Decodable, Identifiable {
     var port: Int
     var identityFile: String
     var codexHome: String
+    var claudeHome: String?
     var python: String
     var codexCli: String
     var hostId: String
@@ -107,7 +114,7 @@ struct SSHConnection: Decodable, Identifiable {
     }
     var values: [String: Any] {
         ["id": id, "name": name, "hostname": hostname, "user": user, "port": port, "identity_file": identityFile,
-         "codex_home": codexHome, "python": python, "codex_cli": codexCli, "host_id": hostId]
+         "codex_home": codexHome, "claude_home": claudeHome ?? "", "python": python, "codex_cli": codexCli, "host_id": hostId]
     }
 }
 
@@ -120,6 +127,7 @@ struct ConnectionCheck: Decodable {
     let sessionsReady: Bool?
     let loginReady: Bool?
     let desktopReady: Bool?
+    let claudeReady: Bool?
 }
 
 struct DetectionSchedule: Decodable {

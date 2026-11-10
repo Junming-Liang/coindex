@@ -28,8 +28,17 @@ for i, (kind, host, title, detail, evidence, action, priority) in enumerate(spec
         summary=detail, conversation_updated_at=now-(i+1)*1200))
     conversations.append(dict(id=cid,host=host,thread_id="demo-"+str(i),title=conversation_title,cwd="/workspace/example",path="/example/rollout.jsonl",
         updated_at=now-(i+1)*1200,analysis_state="submitted",summary=detail,closed=0,active=False))
+# A fictional Claude Code source shows the agent badge and resume-command flow.
+cid = "mac:demo-claude"
+tasks.append(dict(id="demo-task-claude", conversation_id=cid, semantic_key="claude-demo", kind="continue", title="为演示项目补充使用说明",
+    detail="让新用户按文档完成首次运行", progress="已写好草稿；安装步骤尚未验证", evidence="草稿已完成，待验证安装步骤",
+    next_action="按草稿执行一次全新安装并修正文档", artifact="演示记录 · 非真实任务", priority=2, confidence=0.9, status="open",
+    created_at=now-3600, updated_at=now-600, snoozed_until=0, host="mac", thread_id="demo-claude", conversation_title="演示项目文档",
+    cwd="/workspace/example", path="/example/claude-session.jsonl", summary="让新用户按文档完成首次运行", conversation_updated_at=now-600, agent="claude"))
+conversations.append(dict(id=cid,host="mac",thread_id="demo-claude",title="演示项目文档",cwd="/workspace/example",path="/example/claude-session.jsonl",
+    updated_at=now-600,analysis_state="unfinished",summary="已写好草稿；安装步骤尚未验证",closed=0,active=False,agent="claude"))
 snapshot = dict(tasks=tasks,conversations=conversations,hosts=[dict(id=h,status="online",detail="演示数据",checked_at=now,total_files=0,remaining_files=0,root="") for h in ["mac","build-server","dev-server","release-server"]],
-    settings=dict(automatic=True,interval_seconds=1800,idle_minutes=10,batch_size=6,history_days=0,enabled_hosts=["mac","build-server","dev-server","release-server"],source_limit=120,workdays_only=True,work_hours_enabled=False,work_start_minutes=540,work_end_minutes=1080),
+    settings=dict(automatic=True,interval_seconds=1800,idle_minutes=10,batch_size=6,history_days=0,enabled_hosts=["mac","build-server","dev-server","release-server"],source_limit=120,workdays_only=True,work_hours_enabled=False,work_start_minutes=540,work_end_minutes=1080,claude_enabled=False,claude_home=""),
     model="gpt-6-luna",effort="max",pending_analysis=0,last_sync=now-60,last_analysis=now-60,model_error="",sync=dict(running=False,phase=""))
 snapshot["task_map"] = demo_document(tasks)
 snapshot["task_maps"] = [demo_document(tasks, topic["id"]) for topic in snapshot["task_map"]["topics"]]
