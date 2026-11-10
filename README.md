@@ -36,6 +36,7 @@
 - [Linux 安装](#linux-安装)
 - [快速开始](#快速开始)
 - [配置 Codex](#配置-codex)
+- [配置 Claude Code](#配置-claude-code)
 - [配置 SSH](#配置-ssh)
 - [数据与隐私](#数据与隐私)
 - [常见问题](#常见问题)
@@ -284,6 +285,12 @@ CODEX_HOME="$HOME/.codex-work" codex login
 随后在设置填写 `~/.codex-work`。连接结果分别显示 CLI、登录、会话读取、桌面连接。桌面连接用于催办；暂未就绪时，会话整理仍可使用。登录成功不代表所有模型都可用。
 
 coindex 使用临时、只读、结构化的 `codex exec` 分析，隔离用户配置并禁用分析工具。参数见 [Codex CLI 参考](https://learn.chatgpt.com/docs/cli/reference)。旧 CLI 不支持所需选项时，请升级或选择更新的应用内置 CLI。
+
+## 配置 Claude Code
+
+在设置中开启「同时整理 Claude Code 会话」后，coindex 只读采集本机与 SSH 机器上的 Claude Code 会话（`projects` 目录），与 Codex 待办合并到同一清单，来源标为「Claude」。数据目录默认 `CLAUDE_CONFIG_DIR`，否则 `~/.claude`；自定义目录在设置的「Claude 数据目录」填写，远程目录在 SSH 连接的高级设置填写。
+
+分析仍通过你自己的 Codex CLI 和模型运行，不需要 Claude 登录 coindex。Claude 对话不支持一键催办；点击「打开原对话」会生成 `claude --resume` 恢复命令，复制到终端即可继续。Claude 目录不可读时只影响该来源，Codex 采集照常。
 
 ## 配置 SSH
 

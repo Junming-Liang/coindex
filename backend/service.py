@@ -14,6 +14,7 @@ import threading
 import time
 
 from collector import collect, redact, VERSION
+from claude_collector import collect as claude_collect, merge as claude_merge, claude_root
 from analyzer import analyze, codex_path, rewrite_task_copy
 from store import Store
 from connections import profile, ssh_command, ssh_aliases, local_check, remote_check, normalize_remote, codex_home
@@ -29,13 +30,33 @@ def collect_host(host, request, settings=None):
     entry = profile(settings, host)
     request = dict(request, host=host)
     request["root"] = entry.get("codex_home", "")
+    claude_enabled = bool(settings.get("claude_enabled"))
+    claude_home = str(claude_root(settings)) if host == "mac" else entry.get("claude_home", "")
     if host == "mac":
-        return collect(request)
+        result = collect(request)
+        if claude_enabled:
+            try:
+                result = claude_merge(result, claude_collect(dict(request, root=claude_home)))
+            except Exception as error:
+                # Claude is an optional second leg; its failure must not hide Codex data.
+                result.setdefault("read_errors", []).append({"path": "claude:" + claude_home, "error": redact(str(error))[:200]})
+        return result
     code = pathlib.Path(__file__).with_name("collector.py").read_text()
-    # The script and request travel through stdin; neither remote files nor SSH settings change.
-    wrapper = "import json,sys; data=json.loads(sys.stdin.read()); sys.argv=['collector']; scope={'__name__':'collector'}; exec(data['code'],scope); print(json.dumps(scope['collect'](data['request']),ensure_ascii=False))"
+    claude_code = pathlib.Path(__file__).with_name("claude_collector.py").read_text()
+    # The scripts and request travel through stdin; neither remote files nor SSH settings change.
+    wrapper = ("import json,sys,types\n"
+               "data=json.loads(sys.stdin.read())\n"
+               "mod=types.ModuleType('collector');sys.modules['collector']=mod;exec(data['code'],mod.__dict__)\n"
+               "scope={'__name__':'claude_collector'};exec(data['claude_code'],scope)\n"
+               "result=mod.collect(data['request'])\n"
+               "if data.get('claude_enabled'):\n"
+               " try:result=scope['merge'](result,scope['collect'](dict(data['request'],root=data.get('claude_root',''))))\n"
+               " except Exception as error:result.setdefault('read_errors',[]).append({'path':'claude','error':scope['redact'](str(error))[:200]})\n"
+               "print(json.dumps(result,ensure_ascii=False))")
     cmd = ssh_command(entry) + [shlex.quote(entry.get("python") or "python3") + " -c " + shlex.quote(wrapper)]
-    result = subprocess.run(cmd, input=json.dumps({"code": code, "request": request}), text=True, capture_output=True, timeout=60)
+    payload = {"code": code, "claude_code": claude_code, "request": request,
+               "claude_enabled": claude_enabled, "claude_root": claude_home}
+    result = subprocess.run(cmd, input=json.dumps(payload), text=True, capture_output=True, timeout=60)
     if result.returncode:
         raise RuntimeError(redact(result.stderr.strip())[:500] or "SSH 采集失败")
     data = json.loads(result.stdout)
@@ -359,7 +380,7 @@ def serve(folder):
                                         "finished_at": time.time()})
                 result = store.snapshot()
             elif action == "settings":
-                if ((worker and worker.poll() is None) or (summary_worker and summary_worker.poll() is None) or (map_worker and map_worker.poll() is None)) and any(k in request.get("values", {}) for k in ("codex_home", "codex_cli", "codex_app", "remote_hosts", "analysis_model", "analysis_effort")):
+                if ((worker and worker.poll() is None) or (summary_worker and summary_worker.poll() is None) or (map_worker and map_worker.poll() is None)) and any(k in request.get("values", {}) for k in ("codex_home", "codex_cli", "codex_app", "claude_home", "claude_enabled", "remote_hosts", "analysis_model", "analysis_effort")):
                     raise ValueError("请先中止当前更新、总结或导图分析，再修改连接设置")
                 store.save_settings(request.get("values", {}))
                 result = store.snapshot()
@@ -375,16 +396,21 @@ def serve(folder):
                     raise ValueError("找不到关联的 Codex 对话")
                 settings = store.settings()
                 thread_id = target["thread_id"]
-                host_id = desktop_host_id(settings, target["host"])
-                request_id = request.get("id")
-                def open_and_emit(request_id=request_id, thread_id=thread_id, host_id=host_id, settings=settings):
-                    try:
-                        open_desktop_thread(thread_id, host_id, settings["codex_app"])
-                        emit({"id": request_id, "result": {"opened": True}})
-                    except Exception as error:
-                        emit({"id": request_id, "error": redact(str(error))[:1000]})
-                threading.Thread(target=open_and_emit, daemon=True).start()
-                continue
+                if target.get("agent") == "claude":
+                    cwd = target.get("cwd") or ""
+                    command = ("cd " + shlex.quote(cwd) + " && " if cwd else "") + "claude --resume " + shlex.quote(thread_id)
+                    result = {"opened": False, "command": command, "detail": "Claude 对话请在终端恢复；命令已生成"}
+                else:
+                    host_id = desktop_host_id(settings, target["host"])
+                    request_id = request.get("id")
+                    def open_and_emit(request_id=request_id, thread_id=thread_id, host_id=host_id, settings=settings):
+                        try:
+                            open_desktop_thread(thread_id, host_id, settings["codex_app"])
+                            emit({"id": request_id, "result": {"opened": True}})
+                        except Exception as error:
+                            emit({"id": request_id, "error": redact(str(error))[:1000]})
+                    threading.Thread(target=open_and_emit, daemon=True).start()
+                    continue
             elif action == "ssh_terminal_command":
                 result = {"command": shlex.join(ssh_command(request.get("profile", {}), interactive=True))}
             elif action == "check_connection":
@@ -394,7 +420,7 @@ def serve(folder):
                 request_id = request.get("id")
                 def check_and_emit(request_id=request_id, settings=settings, entry=entry):
                     try:
-                        checked = remote_check(entry) if entry else local_check(settings)
+                        checked = remote_check(entry, claude_enabled=bool(settings.get("claude_enabled"))) if entry else local_check(settings)
                         emit({"id": request_id, "result": checked})
                     except Exception as error:
                         emit({"id": request_id, "error": redact(str(error))[:1000]})

@@ -70,6 +70,8 @@ python3 --version
 test -d ~/.codex/sessions && echo "sessions directory exists"
 ```
 
+开启 Claude Code 来源后，同一连接还会只读采集远程 Claude 会话；默认目录 `~/.claude/projects`，自定义目录在连接高级设置的「远程 Claude 数据目录」填写。Claude 目录不可读时连接检查会单独提示，不影响 Codex 采集。
+
 ## 读取、跳转与催办
 
 读取只需 SSH、Python 与会话目录。跳转需要 Mac 的 Codex 桌面认识该主机，默认 ID 是 `remote-ssh-discovered:dev-server`。催办还需要远程已有共享 Codex 服务和支持 `app-server proxy` 的 CLI。

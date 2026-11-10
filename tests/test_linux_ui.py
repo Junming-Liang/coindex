@@ -276,6 +276,67 @@ class DemoUITests(unittest.TestCase):
         uuid.UUID(values["action_id"])
         app.client.close()
 
+    def test_claude_task_shows_source_badge_and_hides_nudge(self):
+        data = demo_snapshot()
+        data["tasks"].append(dict(data["tasks"][0], id="demo-task-claude", conversation_id="mac:demo-claude",
+                                  thread_id="demo-claude", agent="claude", kind="continue"))
+        data["conversations"].append(dict(data["conversations"][0], id="mac:demo-claude",
+                                          thread_id="demo-claude", agent="claude"))
+        app = CoindexApp(self.root, demo=True, demo_data=data)
+        self.assertEqual(app._source_label({"host": "mac", "agent": "claude"}), "本机 · Claude")
+        self.assertEqual(app._source_label({"host": "mac"}), "本机")
+        app._select_task("demo-task-claude")
+        labels = [w.cget("text") for w in self._descendants(app.detail_content) if isinstance(w, tk.Label)]
+        self.assertIn("本机 · Claude", labels)
+        buttons = [w.cget("text") for w in self._descendants(app.detail_content) if isinstance(w, ttk.Button)]
+        self.assertNotIn("轻推原对话…", buttons)
+        app._switch("conversations")
+        values = app.conversations.item("mac:demo-claude", "values")
+        self.assertIn("Claude", values[0])
+
+    def test_claude_resume_copies_command_without_rpc(self):
+        import linux.app as ui
+        calls = []
+
+        class FakeClient:
+            closed = False
+            class process:
+                @staticmethod
+                def poll(): return None
+            def request(self, method, callback=None, **values):
+                calls.append((method, values))
+                return "rpc-id"
+            def drain(self): pass
+            def close(self): self.closed = True
+
+        data = demo_snapshot()
+        data["tasks"].append(dict(data["tasks"][0], id="demo-task-claude", conversation_id="mac:demo-claude",
+                                  thread_id="demo-claude", agent="claude", kind="continue", cwd="/workspace/example"))
+        app = CoindexApp(self.root, demo=False, client_factory=lambda *_: FakeClient(), demo_data=data)
+        app._select_task("demo-task-claude")
+        calls.clear()  # The client requests an initial snapshot on startup.
+        with patch.object(ui.messagebox, "askyesno", return_value=True) as ask:
+            app.open_conversation()
+        self.assertTrue(ask.called)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.root.clipboard_get(), "cd /workspace/example && claude --resume demo-claude")
+        self.assertIn("已复制", app.status_var.get())
+        with patch.object(ui.messagebox, "askyesno", return_value=True):
+            app._claude_resume({"cwd": "/tmp/a b", "thread_id": "x'y"})
+        self.assertEqual(self.root.clipboard_get(), "cd '/tmp/a b' && claude --resume 'x'\"'\"'y'")
+        app.client.close()
+
+    def test_settings_dialog_round_trips_claude_source(self):
+        dialog = SettingsDialog(self.app)
+        self.assertIn("claude_enabled", dialog.vars)
+        self.assertIn("claude_home", dialog.vars)
+        dialog.vars["claude_enabled"].set(True)
+        dialog.vars["claude_home"].set("/tmp/claude-home")
+        values = dialog._values()
+        self.assertIs(values["claude_enabled"], True)
+        self.assertEqual(values["claude_home"], "/tmp/claude-home")
+        dialog.win.destroy()
+
     def test_connection_gate_requires_local_success_and_failed_retest_clears_it(self):
         import linux.app as ui
         calls = []

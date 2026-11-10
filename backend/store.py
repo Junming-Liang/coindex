@@ -15,6 +15,7 @@ DEFAULT_SETTINGS = {"automatic": True, "interval_seconds": 1800, "idle_minutes":
                     "workdays_only": True, "work_hours_enabled": False,
                     "work_start_minutes": 540, "work_end_minutes": 1080,
                     "codex_home": "", "codex_cli": "", "codex_app": "", "remote_hosts": [],
+                    "claude_enabled": False, "claude_home": "",
                     "analysis_model": "gpt-6-luna", "analysis_effort": "max", "connection_setup_complete": False}
 
 
@@ -55,6 +56,8 @@ class Store:
         conversation_columns = {r[1] for r in self.db.execute("PRAGMA table_info(conversations)")}
         if "attention" not in {r[1] for r in self.db.execute("PRAGMA table_info(nudges)")}:
             self.db.execute("ALTER TABLE nudges ADD COLUMN attention TEXT NOT NULL DEFAULT ''")
+        if "agent" not in conversation_columns:
+            self.db.execute("ALTER TABLE conversations ADD COLUMN agent TEXT NOT NULL DEFAULT 'codex'")
         if "analyzed_phase" not in conversation_columns:
             self.db.execute("ALTER TABLE conversations ADD COLUMN analyzed_phase TEXT")
         if "archived" not in conversation_columns:
@@ -149,15 +152,17 @@ class Store:
         settings["source_limit"] = min(max(int(settings["source_limit"]), 20), 300)
         settings["history_days"] = max(0, int(settings["history_days"]))
         settings["connection_setup_complete"] = bool(settings["connection_setup_complete"])
+        settings["claude_enabled"] = bool(settings["claude_enabled"])
         normalize_settings(settings)
         # Clear only changed collection cursors; keep every existing conversation/task.
         old_profiles = {r["id"]: r for r in previous["remote_hosts"]}
         changed = []
         if previous["codex_home"] != settings["codex_home"]:
             changed.append("mac")
+        claude_changed = previous["claude_home"] != settings["claude_home"]
         for remote in settings["remote_hosts"]:
             old = old_profiles.get(remote["id"], {})
-            if any(old.get(k) != remote.get(k) for k in ("hostname", "user", "port", "identity_file", "codex_home", "python")):
+            if any(old.get(k) != remote.get(k) for k in ("hostname", "user", "port", "identity_file", "codex_home", "claude_home", "python")):
                 changed.append(remote["id"])
         with self.db:
             for host in ["mac"] + [r["id"] for r in settings["remote_hosts"]]:
@@ -165,6 +170,9 @@ class Store:
             for host in changed:
                 self.db.execute("DELETE FROM files WHERE host=?", (host,))
                 self.db.execute("UPDATE hosts SET status='unknown',detail='连接设置已变更，等待同步',checked_at=0 WHERE id=?", (host,))
+            if claude_changed:
+                # Only Claude cursors carry the agent marker; Codex cursors stay valid.
+                self.db.execute("DELETE FROM files WHERE signature LIKE '[\"claude\"%'")
             self.db.execute("INSERT INTO meta VALUES('settings',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(settings, ensure_ascii=False),))
 
     def known(self, host):
@@ -177,11 +185,11 @@ class Store:
             for path, signature in result["files"].items():
                 self.db.execute("INSERT INTO files VALUES(?,?,?) ON CONFLICT(host,path) DO UPDATE SET signature=excluded.signature", (host, path, json.dumps(signature)))
             for conv in result["conversations"]:
-                self.db.execute("""INSERT INTO conversations(id,host,thread_id,title,cwd,path,updated_at,payload,fingerprint)
-                VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,cwd=excluded.cwd,path=excluded.path,
-                updated_at=excluded.updated_at,payload=excluded.payload,fingerprint=excluded.fingerprint
+                self.db.execute("""INSERT INTO conversations(id,host,thread_id,title,cwd,path,updated_at,payload,fingerprint,agent)
+                VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,cwd=excluded.cwd,path=excluded.path,
+                updated_at=excluded.updated_at,payload=excluded.payload,fingerprint=excluded.fingerprint,agent=excluded.agent
                 WHERE excluded.updated_at>=conversations.updated_at""",
-                (conv["id"], host, conv["thread_id"], conv["title"], conv["cwd"], conv["path"], conv["updated_at"], json.dumps(conv, ensure_ascii=False), conv["fingerprint"]))
+                (conv["id"], host, conv["thread_id"], conv["title"], conv["cwd"], conv["path"], conv["updated_at"], json.dumps(conv, ensure_ascii=False), conv["fingerprint"], conv.get("agent", "codex")))
             for thread_id, archived in result.get("archive_states", {}).items():
                 if type(archived) is not bool:
                     continue
@@ -433,11 +441,13 @@ class Store:
 
     def nudge_target(self, task_id):
         task_id = self.canonical_task_id(task_id)
-        row = self.db.execute("""SELECT tasks.*,conversations.host,conversations.thread_id,
+        row = self.db.execute("""SELECT tasks.*,conversations.host,conversations.thread_id,conversations.agent,
             conversations.closed,conversations.archived FROM tasks JOIN conversations ON tasks.conversation_id=conversations.id
             WHERE tasks.id=?""", (task_id,)).fetchone()
         if not row or row["kind"] == "manual":
             raise ValueError("该待办没有关联 Codex 对话")
+        if row["agent"] != "codex":
+            raise ValueError("Claude 对话暂不支持一键催办，请复制恢复命令在 Claude 中继续")
         if row["archived"]:
             raise ValueError("对话已归档，不再跟踪或催办")
         if row["status"] != "open" or row["closed"]:
@@ -512,13 +522,14 @@ class Store:
            COALESCE(conversations.thread_id,'') AS thread_id,COALESCE(conversations.title,'') AS conversation_title,
            COALESCE(conversations.cwd,'') AS cwd,COALESCE(conversations.path,'') AS path,
            COALESCE(conversations.summary,'') AS summary,conversations.analysis_state,
+           COALESCE(conversations.agent,'codex') AS agent,
            COALESCE(conversations.updated_at,tasks.updated_at) AS conversation_updated_at
            FROM tasks LEFT JOIN conversations ON tasks.conversation_id=conversations.id
            WHERE tasks.status<>'merged' AND COALESCE(conversations.archived,0)=0 ORDER BY tasks.priority,tasks.updated_at DESC""")]
         conversations = []
         pending_ids = {c["id"] for c in self.eligible()}
         for r in self.db.execute("SELECT * FROM conversations ORDER BY updated_at DESC"):
-            c = {k: r[k] for k in ("id", "host", "thread_id", "title", "cwd", "path", "updated_at", "analysis_state", "summary", "closed", "archived")}
+            c = {k: r[k] for k in ("id", "host", "thread_id", "title", "cwd", "path", "updated_at", "analysis_state", "summary", "closed", "archived", "agent")}
             payload = json.loads(r["payload"])
             c["active"] = payload["active"]
             c["execution_state"] = self.execution_state(payload, now)

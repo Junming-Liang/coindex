@@ -30,8 +30,8 @@ def normalize_remote(value):
         raise ValueError("连接名称需以字母或数字开头，只能包含字母、数字、点、短横线和下划线")
     result = {"id": alias, "name": text(value.get("name", alias), "显示名称", 100) or alias}
     for key, label in (("hostname", "地址"), ("user", "用户名"), ("identity_file", "密钥路径"),
-                       ("codex_home", "远程 Codex 数据目录"), ("python", "远程 Python"),
-                       ("codex_cli", "远程 Codex CLI"), ("host_id", "Codex 主机 ID")):
+                       ("codex_home", "远程 Codex 数据目录"), ("claude_home", "远程 Claude 数据目录"),
+                       ("python", "远程 Python"), ("codex_cli", "远程 Codex CLI"), ("host_id", "Codex 主机 ID")):
         result[key] = text(value.get(key, ""), label)
     if result["hostname"] and (result["hostname"].startswith("-") or not re.fullmatch(r"[A-Za-z0-9_.:\[\]-]+", result["hostname"])):
         raise ValueError("请填写主机名或 IP 地址；跳板机可通过 SSH 别名配置")
@@ -49,8 +49,9 @@ def normalize_remote(value):
 
 
 def normalize_settings(settings):
-    for key in ("codex_home", "codex_cli", "codex_app"):
-        settings[key] = text(settings.get(key, ""), "Codex 路径")
+    for key in ("codex_home", "codex_cli", "codex_app", "claude_home"):
+        settings[key] = text(settings.get(key, ""), "连接路径")
+    settings["claude_enabled"] = bool(settings.get("claude_enabled", False))
     remotes = settings.get("remote_hosts", [])
     if not isinstance(remotes, list) or len(remotes) > 64:
         raise ValueError("最多添加 64 个 SSH 连接")
@@ -217,6 +218,19 @@ def local_check(settings):
     except OSError:
         result["sessions_ready"] = False
     notes.append("会话目录可读取" if result["sessions_ready"] else "无法读取 sessions 目录，请检查目录位置、权限或先创建一个会话")
+    if settings.get("claude_enabled"):
+        from claude_collector import claude_root
+        projects = claude_root(settings)/"projects"
+        claude_ready = projects.is_dir() and os.access(projects, os.R_OK | os.X_OK)
+        try:
+            sample = next(projects.rglob("*.jsonl"), None) if claude_ready else None
+            if sample:
+                with sample.open("rb") as source:
+                    source.read(1)
+        except OSError:
+            claude_ready = False
+        result["claude_ready"] = claude_ready
+        notes.append("Claude 会话目录可读取" if claude_ready else "无法读取 Claude projects 目录，请检查目录位置、权限或先创建一个 Claude 会话")
     try:
         from nudge import DesktopIPC
         ipc = DesktopIPC(root/"ipc/ipc.sock")
@@ -243,16 +257,28 @@ try:
  if sample:
   with sample.open('rb') as source: source.read(1)
 except OSError: ready=False
-print(json.dumps({'ok':ready,'root':str(root),'sessions_ready':ready,'detail':'SSH 已连接，Python 可用，会话目录可读取' if ready else 'SSH 已连接，但会话目录无法读取或 Python 版本过旧；请检查 Codex 数据目录、读取权限及 Python 3.8+'}))
+result={'ok':ready,'root':str(root),'sessions_ready':ready,'detail':'SSH 已连接，Python 可用，会话目录可读取' if ready else 'SSH 已连接，但会话目录无法读取或 Python 版本过旧；请检查 Codex 数据目录、读取权限及 Python 3.8+'}
+if request.get('claude_enabled'):
+ projects=pathlib.Path(request.get('claude_root') or os.environ.get('CLAUDE_CONFIG_DIR') or str(pathlib.Path.home()/'.claude')).expanduser().resolve()/'projects'
+ claude_ready=projects.is_dir() and os.access(projects,os.R_OK|os.X_OK)
+ try:
+  sample=next(projects.rglob('*.jsonl'),None) if claude_ready else None
+  if sample:
+   with sample.open('rb') as source: source.read(1)
+ except OSError: claude_ready=False
+ result['claude_ready']=claude_ready
+ result['detail']+='；Claude 会话目录可读取' if claude_ready else '；无法读取 Claude projects 目录，请检查远程 Claude 数据目录'
+print(json.dumps(result))
 """
 
 
-def remote_check(entry):
+def remote_check(entry, claude_enabled=False):
     from collector import redact
     entry = normalize_remote(entry)
     args = ssh_command(entry) + [shlex.quote(entry["python"] or "python3") + " -c " + shlex.quote(REMOTE_CHECK)]
     try:
-        run = subprocess.run(args, input=json.dumps({"root": entry["codex_home"]}), capture_output=True, text=True, timeout=20)
+        run = subprocess.run(args, input=json.dumps({"root": entry["codex_home"], "claude_enabled": bool(claude_enabled),
+                                                   "claude_root": entry["claude_home"]}), capture_output=True, text=True, timeout=20)
         if run.returncode:
             detail = redact(run.stderr.strip())[:600] or "SSH 连接失败"
             detail += "；请先在终端连接，核对主机指纹并完成密钥登录，然后重新测试。远程需要 Python 3。"

@@ -277,7 +277,7 @@ struct MainView: View {
                             Text(conv.title).font(.system(size: 14, weight: .semibold)).lineLimit(2)
                             Text(conv.needsAnalysis == true ? "最新记录待整理" : conv.summary.isEmpty ? "等待分析最近记录" : conv.summary)
                                 .font(.system(size: 12)).foregroundStyle(Palette.muted).lineLimit(2)
-                            Text("\(model.hostName(conv.host)) · \(conv.stateTitle) · \(relativeTime(conv.updatedAt))")
+                            Text("\(model.hostName(conv.host))\(conv.isClaude ? " · Claude" : "") · \(conv.stateTitle) · \(relativeTime(conv.updatedAt))")
                                 .font(.system(size: 10)).foregroundStyle(Palette.muted)
                         }
                         Spacer(minLength: 8)
@@ -337,7 +337,7 @@ struct MainView: View {
                     detailSection(task.isRunning ? "当前进度" : "停住位置", text: task.stopPoint)
                     detailSection(task.isRunning ? "接下来" : "下一步", text: task.nextAction)
                     Button { model.copy(task.nextAction) } label: { Label("复制下一步", systemImage: "doc.on.doc") }.controlSize(.small)
-                    if task.isOpen { NudgeControl(task: task, detailed: true) }
+                    if task.isOpen && !task.isClaude { NudgeControl(task: task, detailed: true) }
                 }
                 if task.isOpen {
                     HStack {
@@ -357,10 +357,17 @@ struct MainView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("原始对话").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                     Text(task.conversationTitle).font(.callout).textSelection(.enabled)
-                    Text(model.hostName(task.host)).font(.caption).foregroundStyle(Palette.accent)
+                    Text(model.hostName(task.host) + (task.isClaude ? " · Claude" : "")).font(.caption).foregroundStyle(Palette.accent)
                     Text(task.cwd).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
                     HStack {
-                        Button("打开 Codex") { model.openConversation(task.threadId, host: task.host) }
+                        if task.isClaude {
+                            Button("复制 Claude 恢复命令") {
+                                model.copy(model.claudeResumeCommand(task))
+                                model.showToast("已复制恢复命令，请在终端运行")
+                            }
+                        } else {
+                            Button("打开 Codex") { model.openConversation(task.threadId, host: task.host) }
+                        }
                         Button("复制来源") { model.copy("主机: \(task.host)\n对话: \(task.threadId)\n文件: \(task.path)") }
                     }.controlSize(.small)
                 }
@@ -401,7 +408,7 @@ struct TaskCard: View {
                     StatusBadge(task: task)
                     if task.priority == 1 { Label("优先", systemImage: "flag.fill").font(.system(size: 10)).foregroundStyle(.orange) }
                     Spacer()
-                    Text(task.isManual ? "手动添加" : model.hostName(task.host)).font(.system(size: 10, weight: .medium)).foregroundStyle(Palette.muted)
+                    Text(task.isManual ? "手动添加" : model.hostName(task.host) + (task.isClaude ? " · Claude" : "")).font(.system(size: 10, weight: .medium)).foregroundStyle(Palette.muted)
                 }
                 HStack(alignment: .top, spacing: 8) {
                     Text(task.title).font(.system(size: 16, weight: .semibold)).tracking(-0.2)
@@ -426,7 +433,7 @@ struct TaskCard: View {
                     }
                     Spacer(minLength: 4)
                     Text(relativeTime(task.conversationUpdatedAt)).fixedSize()
-                    if task.isOpen && !task.isManual { NudgeControl(task: task, detailed: false) }
+                    if task.isOpen && !task.isManual && !task.isClaude { NudgeControl(task: task, detailed: false) }
                     else { Image(systemName: "chevron.right").font(.system(size: 9)) }
                 }.font(.system(size: 10)).foregroundStyle(Palette.muted)
                 if let record = model.latestNudge(task) {
@@ -443,7 +450,7 @@ struct TaskCard: View {
                 Button("修改标题") { model.editTitle(task) }
                 if task.isManual { Button("编辑待办") { model.editManual(task) } }
                 else { Button("复制下一步") { model.copy(task.nextAction) } }
-                if task.isOpen && !task.isManual { Button("一键催办") { model.nudge(task) }.disabled(model.nudgeDisabled(task)) }
+                if task.isOpen && !task.isManual && !task.isClaude { Button("一键催办") { model.nudge(task) }.disabled(model.nudgeDisabled(task)) }
                 Button("稍后一小时") { model.act("snooze", id: task.id, value: 60) }
                 Button("忽略") { model.act("dismiss", id: task.id) }
             }
